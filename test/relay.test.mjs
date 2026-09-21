@@ -95,3 +95,47 @@ test("opt-in local event bridge separates publisher and read-only subscriber cre
     await new Promise((resolve) => server.close(resolve));
   }
 });
+
+test("speaking feed separates a native writer from browser readers and expires stale state", async () => {
+  const writer = "w".repeat(40);
+  const subscriber = "s".repeat(40);
+  let nowMs = 1_000;
+  assert.throws(() => createRelayServer({ token, allowedOrigin: origin, ask: async () => ({}), speakingWriterToken: token }), /distinct/);
+  assert.throws(() => createRelayServer({ token, allowedOrigin: origin, ask: async () => ({}), eventSubscriberToken: subscriber, speakingWriterToken: subscriber }), /distinct/);
+  const server = createRelayServer({ token, allowedOrigin: origin, ask: async () => ({}), speakingWriterToken: writer, now: () => nowMs });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const address = server.address();
+    const endpoint = `http://127.0.0.1:${address.port}/v1/speaking`;
+    const reader = new RelayTransport(`http://127.0.0.1:${address.port}`, token,
+      (input, init) => fetch(input, { ...init, headers: { ...init.headers, Origin: origin } }));
+    const read = (headers = {}) => fetch(endpoint, { headers: { Origin: origin, Authorization: `Bearer ${token}`, ...headers } });
+    const post = (payload, headers = {}) => fetch(endpoint, { method: "POST", headers: { Authorization: `Bearer ${writer}`, "Content-Type": "application/json", ...headers }, body: JSON.stringify(payload) });
+    const update = { schema: "reflex.speaking@1", session: "session_01", seq: 1, speaking: true };
+    assert.deepEqual(await (await read()).json(), { schema: "reflex.speaking@1", known: false });
+    assert.equal(await reader.readSpeaking(), null);
+    assert.equal((await read({ Authorization: `Bearer ${writer}` })).status, 401);
+    assert.equal((await read({ Origin: "http://evil.test" })).status, 403);
+    assert.equal((await post(update, { Origin: origin })).status, 403);
+    assert.equal((await post(update, { Authorization: `Bearer ${token}` })).status, 401);
+    assert.equal((await post({ ...update, transcript: "private words" })).status, 400);
+    assert.equal((await post({ ...update, padding: "x".repeat(300) })).status, 413);
+    assert.equal((await post(update)).status, 202);
+    assert.deepEqual(await (await read()).json(), { schema: "reflex.speaking@1", known: true, currently_speaking: true });
+    assert.equal(await reader.readSpeaking(), true);
+    assert.equal((await post(update)).status, 409);
+    assert.equal((await post({ ...update, session: "session_02", seq: 2 })).status, 409);
+    nowMs += 1_000;
+    assert.equal((await post({ ...update, seq: 2, speaking: false })).status, 202);
+    assert.deepEqual(await (await read()).json(), { schema: "reflex.speaking@1", known: true, currently_speaking: false });
+    assert.equal(await reader.readSpeaking(), false);
+    nowMs += 1_501;
+    assert.deepEqual(await (await read()).json(), { schema: "reflex.speaking@1", known: false });
+    assert.equal(await reader.readSpeaking(), null);
+    assert.equal((await post({ ...update, seq: 1 })).status, 409);
+    assert.equal((await post({ ...update, session: "session_02" })).status, 202);
+    assert.deepEqual(await (await read()).json(), { schema: "reflex.speaking@1", known: true, currently_speaking: true });
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

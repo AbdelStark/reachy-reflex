@@ -4,14 +4,16 @@ import { createRelayServer } from "../server/relay.mjs";
 
 const publisherToken = "p".repeat(40);
 const subscriberToken = "s".repeat(40);
+const speakingWriterToken = "w".repeat(40);
 
 test("a synthetic camera judgment crosses the real loopback relay to a read-only subscriber", async ({ page }) => {
   let modelCalls = 0;
   const server = createRelayServer({
     token: publisherToken,
     eventSubscriberToken: subscriberToken,
+    speakingWriterToken,
     allowedOrigin: "http://127.0.0.1:5173",
-    ask: async (state: { people: Array<{ id: string }> }) => {
+    ask: async (state: { people: Array<{ id: string }>; robot?: { currently_speaking?: boolean } }) => {
       modelCalls++;
       const person = state.people[0]?.id ?? "none";
       const noul = (value: number) => ({ type: "noul", noul: value });
@@ -21,7 +23,7 @@ test("a synthetic camera judgment crosses the real loopback relay to a read-only
           attention_target: { type: "choice", choice: person, confidence: 0.9 },
           addressed: noul(0.1), addressed_by_gaze: noul(0.1), wants_reply: noul(0.1),
           pause_invites_ack: noul(0.1), being_ignored: noul(0.1), someone_leaving: noul(0.1),
-          someone_arriving: noul(0.1), turn_action: { type: "choice", choice: "keep_talking", confidence: 0.9 },
+          someone_arriving: noul(0.1), turn_action: { type: "choice", choice: state.robot?.currently_speaking ? "yield" : "keep_talking", confidence: 0.9 },
           engagement: { type: "score", score: 2 }, speaker_mood: { type: "choice", choice: "neutral", confidence: 0.9 },
           group_talking_to_each_other: noul(0.1), robot_named: noul(0.1), question_asked: noul(0.1),
           laughter_moment: noul(0.1), silence_awkward: noul(0.1),
@@ -97,6 +99,22 @@ test("a synthetic camera judgment crosses the real loopback relay to a read-only
     expect(Number.isFinite(received[0].t_ms)).toBe(true);
     expect(JSON.stringify(received)).not.toContain("transcript");
     expect(await page.evaluate(() => (window as unknown as { integrationMotionCommands: unknown[] }).integrationMotionCommands)).toEqual([]);
+
+    await page.locator("#speaking-enable").check();
+    const speakingUpdate = await fetch(`http://127.0.0.1:${address.port}/v1/speaking`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${speakingWriterToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ schema: "reflex.speaking@1", session: "synthetic_session", seq: 1, speaking: true }),
+    });
+    expect(speakingUpdate.status).toBe(202);
+    await expect(page.locator("#speaking-status")).toContainText("may be speaking");
+    await expect.poll(() => received.some((message) => (message.event as { type?: string }).type === "yield")).toBe(true);
+    expect(received.find((message) => (message.event as { type?: string }).type === "yield")?.schema).toBe("reflex.event@1");
+    expect(await page.evaluate(() => (window as unknown as { integrationMotionCommands: unknown[] }).integrationMotionCommands)).toEqual([]);
+    await expect(page.locator("#speaking-status")).toContainText("missing or expired", { timeout: 5_000 });
+    const yieldCount = received.filter((message) => (message.event as { type?: string }).type === "yield").length;
+    await page.waitForTimeout(600);
+    expect(received.filter((message) => (message.event as { type?: string }).type === "yield")).toHaveLength(yieldCount);
   } finally {
     await page.evaluate(() => window.dispatchEvent(new Event("pagehide"))).catch(() => {});
     if (subscriber.readyState === WebSocket.OPEN) {

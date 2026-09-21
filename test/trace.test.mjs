@@ -21,6 +21,13 @@ test("trace keeps inspectable judgment and dispatch data without raw text or ima
   assert.equal(record.policy_epoch, 1);
   assert.deepEqual(record.people, [{ id: "p1", bearing_deg: -12 }]);
   assert.equal(record.recent_text_present, true);
+  assert.equal(record.robot_speaking_known, false);
+  assert.equal(record.robot_speaking, false);
+  trace.add({ people: [], robot: { currentlySpeaking: false } }, tick, 135, "off", 1);
+  trace.add({ people: [], robot: { currentlySpeaking: true } }, tick, 137, "off", 1);
+  const [quiet, speaking] = trace.toJSONL().trim().split("\n").slice(-2).map(JSON.parse);
+  assert.deepEqual([quiet.robot_speaking_known, quiet.robot_speaking], [true, false]);
+  assert.deepEqual([speaking.robot_speaking_known, speaking.robot_speaking], [true, true]);
   assert.equal(record.answers.addressed, 0.2);
   assert.equal(record.decision.motion, "held");
   assert.equal(record.model, "fixture-only");

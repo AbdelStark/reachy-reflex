@@ -4,7 +4,7 @@ import type { RoomObservation } from "reachy-jev";
 import type { EngineTick } from "./engine.js";
 import type { ReflexAnswers } from "./policy.js";
 
-export const TRACE_SCHEMA = "reflex.tick@2";
+export const TRACE_SCHEMA = "reflex.tick@3";
 export const MAX_TRACE_ROWS = 1_200;
 export type MotionOutcome = "preview" | "off" | "held" | "accepted" | "not_accepted" | "error";
 
@@ -46,6 +46,7 @@ export interface TraceTick {
   recent_text_present: boolean;
   most_recent_speaker?: string;
   robot_speaking: boolean;
+  robot_speaking_known: boolean;
   judgment_error: boolean;
   stale: boolean;
   skipped: boolean;
@@ -91,6 +92,7 @@ export class SessionTrace {
       ...(observation.transcriptRecent?.length && personId(observation.transcriptRecent.at(-1)!.who)
         ? { most_recent_speaker: observation.transcriptRecent.at(-1)!.who } : {}),
       robot_speaking: observation.robot?.currentlySpeaking === true,
+      robot_speaking_known: observation.robot?.currentlySpeaking !== undefined,
       judgment_error: Boolean(tick.error),
       stale: tick.stale,
       skipped: tick.skipped === true,

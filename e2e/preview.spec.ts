@@ -35,7 +35,7 @@ test("trace is opt-in, bounded to this tab, downloadable, and text-free", async 
   const path = await download.path();
   expect(path).not.toBeNull();
   const rows = (await readFile(path!, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-  expect(rows[0].schema).toBe("reflex.tick@2");
+  expect(rows[0].schema).toBe("reflex.tick@3");
   expect(Number.isSafeInteger(rows[0].policy_epoch)).toBe(true);
   expect(rows[0].decision.motion).toBe("preview");
   expect(rows.some((row) => row.people.some((person: { id: string }) => person.id === "p1"))).toBe(true);

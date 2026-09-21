@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add an opt-in, distinct-token local speaking-state writer/read bridge with bounded monotonic updates and 1.5-second expiry. A synthetic browser-to-relay-to-subscriber test now exercises a camera-gated `yield` hint and verifies expiry; no owned conversation writer, playback-complete signal, or live TTS consumer is claimed.
+- Version opt-in traces as `reflex.tick@3` to distinguish asserted quiet from unknown speaking state; the offline replay reader still accepts prior `@2` traces. Hold proposed nod motion while speaking state is unknown.
+- Show tab-scoped reported token usage and unresolved requests without inferring a model-specific dollar cost or invoice.
 - Add an opt-in, origin- and token-gated loopback event bridge with distinct read-only WebSocket credentials. Browser publication requires current camera evidence; no Conversation App consumer or robot delivery is claimed.
 - Exercise the complete synthetic browser-to-loopback-relay-to-WebSocket-subscriber path without TypeSafe calls or robot motion.
 - Align the shared `reachy-jev` pin with the typed question-wire release used by the other Reachy apps; the question set and expected wire digest are unchanged.

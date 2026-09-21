@@ -8,6 +8,9 @@ const MAX_PER_MINUTE = 300;
 const MAX_EVENT_BYTES = 512;
 const MAX_EVENT_SUBSCRIBERS = 8;
 const MAX_EVENTS_PER_MINUTE = 600;
+const MAX_SPEAKING_BYTES = 256;
+const SPEAKING_TTL_MS = 1500;
+const MAX_SPEAKING_PER_MINUTE = 120;
 
 function send(response, status, body, origin) {
   response.writeHead(status, {
@@ -44,16 +47,26 @@ function validEvent(event) {
   return false;
 }
 
+function validSpeakingUpdate(value) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    && Object.keys(value).sort().join() === "schema,seq,session,speaking"
+    && value.schema === "reflex.speaking@1"
+    && typeof value.session === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(value.session)
+    && Number.isSafeInteger(value.seq) && value.seq >= 1
+    && typeof value.speaking === "boolean";
+}
+
 function rejectUpgrade(socket, status) {
   socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
 }
 
 /** Local-only, authenticated and bounded Jev relay. Never logs state or secrets. */
-export function createRelayServer({ token, allowedOrigin, ask, eventSubscriberToken, now = Date.now }) {
+export function createRelayServer({ token, allowedOrigin, ask, eventSubscriberToken, speakingWriterToken, now = Date.now }) {
   if (typeof token !== "string" || token.length < 32) throw new TypeError("relay token must be at least 32 characters");
   if (typeof allowedOrigin !== "string" || !/^https?:\/\/[^/]+$/.test(allowedOrigin)) throw new TypeError("invalid allowed origin");
   if (typeof ask !== "function") throw new TypeError("ask function required");
   if (eventSubscriberToken !== undefined && (typeof eventSubscriberToken !== "string" || eventSubscriberToken.length < 32 || eventSubscriberToken === token)) throw new TypeError("event subscriber token must be distinct and at least 32 characters");
+  if (speakingWriterToken !== undefined && (typeof speakingWriterToken !== "string" || speakingWriterToken.length < 32 || speakingWriterToken === token || speakingWriterToken === eventSubscriberToken)) throw new TypeError("speaking writer token must be distinct and at least 32 characters");
   const events = eventSubscriberToken ? new WebSocketServer({ noServer: true, perMessageDeflate: false, maxPayload: MAX_EVENT_BYTES }) : undefined;
   events?.on("connection", (socket) => {
     socket.on("message", () => socket.close(1008, "read only"));
@@ -65,9 +78,64 @@ export function createRelayServer({ token, allowedOrigin, ask, eventSubscriberTo
   let eventWindowStart = now();
   let eventCalls = 0;
   let eventSequence = 0;
+  let speakingWindowStart = now();
+  let speakingCalls = 0;
+  let speakingState;
+  const speakingSequences = new Map();
   const server = createServer(async (request, response) => {
     const origin = request.headers.origin === allowedOrigin ? allowedOrigin : undefined;
     if (request.headers.origin && !origin) return send(response, 403, { error: "origin_forbidden" });
+    if (request.url === "/v1/speaking") {
+      if (!speakingWriterToken) return send(response, 404, { error: "speaking_disabled" }, origin);
+      if (request.method === "OPTIONS") {
+        if (!origin) return send(response, 403, { error: "origin_forbidden" });
+        response.writeHead(204, {
+          "Access-Control-Allow-Origin": origin,
+          "Access-Control-Allow-Methods": "GET, OPTIONS",
+          "Access-Control-Allow-Headers": "Authorization",
+          Vary: "Origin",
+        });
+        return response.end();
+      }
+      if (request.method === "GET") {
+        if (!origin) return send(response, 403, { error: "origin_required" });
+        if (!authorized(request.headers.authorization, token)) return send(response, 401, { error: "unauthorized" }, origin);
+        const age = speakingState ? now() - speakingState.receivedAtMs : Infinity;
+        const known = age >= 0 && age <= SPEAKING_TTL_MS;
+        return send(response, 200, { schema: "reflex.speaking@1", known, ...(known ? { currently_speaking: speakingState.speaking } : {}) }, origin);
+      }
+      if (request.method !== "POST") return send(response, 405, { error: "method_not_allowed" }, origin);
+      if (request.headers.origin) return send(response, 403, { error: "browser_write_forbidden" });
+      if (!authorized(request.headers.authorization, speakingWriterToken)) return send(response, 401, { error: "unauthorized" });
+      if (!request.headers["content-type"]?.startsWith("application/json")) return send(response, 415, { error: "json_required" });
+      if (now() - speakingWindowStart >= 60_000) { speakingWindowStart = now(); speakingCalls = 0; }
+      if (speakingCalls >= MAX_SPEAKING_PER_MINUTE) return send(response, 429, { error: "speaking_rate_limited" });
+      speakingCalls++;
+      try {
+        let size = 0;
+        const chunks = [];
+        for await (const chunk of request) {
+          size += chunk.length;
+          if (size > MAX_SPEAKING_BYTES) return send(response, 413, { error: "too_large" });
+          chunks.push(chunk);
+        }
+        let update;
+        try { update = JSON.parse(Buffer.concat(chunks).toString("utf8")); }
+        catch { return send(response, 400, { error: "invalid_json" }); }
+        if (!validSpeakingUpdate(update)) return send(response, 400, { error: "invalid_speaking_update" });
+        const previousAge = speakingState ? now() - speakingState.receivedAtMs : Infinity;
+        if ((speakingSequences.get(update.session) ?? 0) >= update.seq
+          || (previousAge >= 0 && previousAge <= SPEAKING_TTL_MS && update.session !== speakingState.session)) {
+          return send(response, 409, { error: "stale_speaking_update" });
+        }
+        speakingState = { session: update.session, seq: update.seq, speaking: update.speaking, receivedAtMs: now() };
+        speakingSequences.set(update.session, update.seq);
+        if (speakingSequences.size > 32) speakingSequences.delete(speakingSequences.keys().next().value);
+        return send(response, 202, { accepted: true });
+      } catch {
+        return send(response, 503, { error: "speaking_unavailable" });
+      }
+    }
     if (request.url === "/v1/events") {
       if (!events) return send(response, 404, { error: "events_disabled" }, origin);
       if (request.method === "OPTIONS") {

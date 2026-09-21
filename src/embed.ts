@@ -6,7 +6,7 @@ import { ReflexEngine } from "./engine.js";
 import { fixtureAsk } from "./fixture.js";
 import { RobotMotionController, motionEvidenceCurrent, type MotionEvidence } from "./motion.js";
 import { PerceptionState } from "./perception.js";
-import { RelayTransport } from "./relay.js";
+import { RelayError, RelayTransport } from "./relay.js";
 import { VideoFaceDetector } from "./vision.js";
 import { BrowserSpeechInput, RecentTranscripts, browserRecognition } from "./speech.js";
 import { RobotSoundInput } from "./sound.js";
@@ -46,6 +46,8 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
         <label class="motion-toggle" ${preview ? "hidden" : ""}><input id="motion-enable" type="checkbox" disabled><span>Enable experimental robot motion</span></label>
         <label class="tracking-toggle" ${preview ? "hidden" : ""}><input id="events-enable" type="checkbox" disabled><span>Publish fresh, text-free control hints to the authenticated local event bridge. A separate local subscriber may receive person labels and probabilities; no speech or robot action is sent by this switch.</span></label>
         <p id="events-status" role="status" aria-live="polite" ${preview ? "hidden" : ""}>Local control events off.</p>
+        <label class="tracking-toggle" ${preview ? "hidden" : ""}><input id="speaking-enable" type="checkbox" disabled><span>Use a separate local app's short-lived speaking-state assertion for turn-taking judgments. It needs a distinct relay writer token and regular updates; it is not proof that robot audio is playing or silent.</span></label>
+        <p id="speaking-status" role="status" aria-live="polite" ${preview ? "hidden" : ""}>Speaking-state feed off; yield/interrupt hints unavailable.</p>
         <div class="trace-controls"><label class="tracking-toggle"><input id="trace-enable" type="checkbox"><span>Record a local, text-free judgment trace for this tab. Ask nearby people first; the export includes approximate face bearings and model answers, but no frames, audio, or transcript text.</span></label><div><button id="trace-download" type="button" disabled>Download trace JSONL</button><button id="trace-clear" type="button" disabled>Discard trace</button></div><p id="trace-status" role="status" aria-live="polite">Trace off. Nothing saved.</p></div>
         <p id="status" role="status" aria-live="polite">${preview ? "Preview running with fixture-only answers." : "Connect a relay before judging the room. Motion stays off until enabled."}</p>
       </section>
@@ -71,6 +73,8 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
   const speechStatus = q<HTMLElement>("#speech-status");
   const eventsToggle = q<HTMLInputElement>("#events-enable");
   const eventsStatus = q<HTMLElement>("#events-status");
+  const speakingToggle = q<HTMLInputElement>("#speaking-enable");
+  const speakingStatus = q<HTMLElement>("#speaking-status");
   const traceToggle = q<HTMLInputElement>("#trace-enable");
   const traceDownload = q<HTMLButtonElement>("#trace-download");
   const traceClear = q<HTMLButtonElement>("#trace-clear");
@@ -164,6 +168,9 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
   let detector: FaceDetectorPort | undefined;
   let engine: ReflexEngine | undefined = preview ? new ReflexEngine(new JevClient({ ask: fixtureAsk })) : undefined;
   let relayTransport: RelayTransport | undefined;
+  let speakingState: boolean | null = null;
+  let speakingEpoch = 0;
+  let speakingPollBusy = false;
   let ticks = 0;
   let active = true;
   const usageMeter = new UsageMeter((snapshot) => {
@@ -184,6 +191,41 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
     lastMotionSource = undefined;
     lastEventSource = undefined;
   }
+  const setSpeakingState = (next: boolean | null, message: string) => {
+    if (speakingState !== next) {
+      speakingState = next;
+      invalidateJudgment();
+    }
+    speakingStatus.textContent = message;
+  };
+  speakingToggle.addEventListener("change", () => {
+    speakingEpoch++;
+    setSpeakingState(null, speakingToggle.checked
+      ? "Waiting for a fresh authenticated local speaking assertion; turn hints held."
+      : "Speaking-state feed off; yield/interrupt hints unavailable.");
+  });
+  async function pollSpeaking(): Promise<void> {
+    if (!active || !speakingToggle.checked || !relayTransport || speakingPollBusy) return;
+    speakingPollBusy = true;
+    const transport = relayTransport;
+    const epoch = speakingEpoch;
+    try {
+      const state = await transport.readSpeaking();
+      if (!active || !speakingToggle.checked || relayTransport !== transport || epoch !== speakingEpoch) return;
+      setSpeakingState(state, state === null
+        ? "Local speaking assertion missing or expired; turn hints held."
+        : state ? "Local app asserts Reachy may be speaking; turn hints are advisory."
+          : "Local app asserts Reachy is quiet; this is not a playback-complete receipt.");
+    } catch (error) {
+      if (!active || relayTransport !== transport || epoch !== speakingEpoch) return;
+      if (error instanceof RelayError && error.status === 404) {
+        speakingToggle.checked = false;
+        speakingEpoch++;
+        setSpeakingState(null, "Relay speaking feed disabled; set a distinct writer token before starting it.");
+      } else setSpeakingState(null, "Speaking feed unavailable; turn hints held until a fresh assertion arrives.");
+    } finally { speakingPollBusy = false; }
+  }
+  const speakingTimer = window.setInterval(() => { void pollSpeaking(); }, 500);
   eventsToggle.addEventListener("change", () => {
     invalidateJudgment();
     eventsStatus.textContent = eventsToggle.checked
@@ -262,6 +304,10 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
         const transport = new RelayTransport(q<HTMLInputElement>("#relay-url").value, q<HTMLInputElement>("#relay-token").value);
         engine = new ReflexEngine(new JevClient({ ask: usageMeter.wrap(transport.ask.bind(transport)) }));
         relayTransport = transport;
+        speakingEpoch++;
+        setSpeakingState(null, "Speaking-state feed needs a fresh assertion from a separate local app.");
+        speakingToggle.disabled = !transport.localSpeakingBridge;
+        if (speakingToggle.disabled) speakingToggle.checked = false;
         traceEpoch++;
         lastMotionSource = undefined;
         lastEventSource = undefined;
@@ -410,6 +456,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
         if (fixturePerson) perception.acceptFaces([{ x: 0.6, y: 0.2, width: 0.25, height: 0.3 }], now);
       }
       const observation = perception.snapshot(now);
+      if (speakingState !== null) observation.robot = { currentlySpeaking: speakingState };
       if (!preview) {
         const reading = sound?.snapshot();
         if (reading) observation.sound = reading;
@@ -459,6 +506,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
       }
       const motionReady = Boolean(host && motion && !audioOnly && !result.stale && detector && motionToggle.checked
         && trackingVersion === detectorEpoch && motionVersion === motionEpoch
+        && (speakingState !== null || !result.output.nod)
         && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
         && lastMotionSource && motionEvidenceCurrent({ ...lastMotionSource, deliveredAtMs,
           latestFrameAtMs: lastFrameAtMs, latestPeople: perception.snapshot(deliveredAtMs).people ?? [] }));
@@ -498,6 +546,10 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
     soundEpoch++;
     clearInterval(tickTimer);
     clearInterval(detectTimer);
+    clearInterval(speakingTimer);
+    speakingEpoch++;
+    speakingToggle.checked = false;
+    speakingState = null;
     motion?.setEnabled(false);
     eventsToggle.checked = false;
     detector?.close();

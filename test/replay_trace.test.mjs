@@ -42,6 +42,10 @@ test("replay rejects malformed, out-of-order, and older trace schemas", async ()
   const rows = (await recordedFixture()).trim().split("\n").map(JSON.parse);
   assert.throws(() => replayTrace("not json"), /invalid JSON/);
   assert.throws(() => replayTrace(JSON.stringify({ ...rows[0], schema: "reflex.tick@1" })), /invalid trace row/);
+  assert.throws(() => replayTrace(JSON.stringify({ ...rows[0], robot_speaking_known: "yes" })), /invalid trace row/);
+  assert.throws(() => replayTrace(JSON.stringify({ ...rows[0], robot_speaking_known: false, robot_speaking: true })), /invalid trace row/);
+  const legacy = rows.map(({ robot_speaking_known, ...row }) => ({ ...row, schema: "reflex.tick@2" }));
+  assert.deepEqual(replayTrace(legacy.map(JSON.stringify).join("\n")), { rows: 3, epochs: 2, mismatches: [] });
   assert.throws(() => replayTrace(JSON.stringify({ ...rows[0], policy_epoch: -1 })), /invalid trace row/);
   assert.throws(() => replayTrace(JSON.stringify({ ...rows[0], answers: { ...rows[0].answers, addressed: 1.5 } })), /invalid recorded answers/);
   assert.throws(() => replayTrace(JSON.stringify({ ...rows[0], people: [rows[0].people[0], rows[0].people[0]] })), /invalid trace row/);

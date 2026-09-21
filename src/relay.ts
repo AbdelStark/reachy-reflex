@@ -9,7 +9,9 @@ export class RelayError extends Error {
 export class RelayTransport {
   private readonly endpoint: URL;
   private readonly eventsEndpoint: URL;
+  private readonly speakingEndpoint: URL;
   readonly localEventBridge: boolean;
+  readonly localSpeakingBridge: boolean;
   constructor(baseURL: string, private readonly token: string, private readonly fetcher: typeof fetch = fetch) {
     const url = new URL(baseURL);
     const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
@@ -18,7 +20,9 @@ export class RelayTransport {
     if (token.length < 32) throw new TypeError("relay token must be at least 32 characters");
     this.endpoint = new URL("/v1/systemone", url);
     this.eventsEndpoint = new URL("/v1/events", url);
+    this.speakingEndpoint = new URL("/v1/speaking", url);
     this.localEventBridge = url.protocol === "http:" && url.hostname === "127.0.0.1";
+    this.localSpeakingBridge = this.localEventBridge;
   }
   async ask(state: unknown, questions: unknown): Promise<JevResponse> {
     const response = await this.fetcher.call(globalThis, this.endpoint, {
@@ -49,5 +53,28 @@ export class RelayTransport {
       throw new TypeError("invalid event bridge response");
     }
     return value.subscribers as number;
+  }
+
+  /** A short-lived assertion from a separate local app, never SDK playback proof. */
+  async readSpeaking(): Promise<boolean | null> {
+    if (!this.localSpeakingBridge) throw new TypeError("speaking feed requires a numeric loopback relay");
+    const response = await this.fetcher.call(globalThis, this.speakingEndpoint, {
+      headers: { Authorization: `Bearer ${this.token}` },
+      signal: AbortSignal.timeout(1000),
+    });
+    if (!response.ok) throw new RelayError(response.status);
+    const value: unknown = await response.json();
+    if (!value || typeof value !== "object" || Array.isArray(value) || !("schema" in value)
+      || value.schema !== "reflex.speaking@1" || !("known" in value) || typeof value.known !== "boolean") {
+      throw new TypeError("invalid speaking feed response");
+    }
+    if (!value.known) {
+      if ("currently_speaking" in value) throw new TypeError("invalid unknown speaking state");
+      return null;
+    }
+    if (!("currently_speaking" in value) || typeof value.currently_speaking !== "boolean") {
+      throw new TypeError("invalid known speaking state");
+    }
+    return value.currently_speaking;
   }
 }

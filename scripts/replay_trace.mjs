@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ReflexPolicy } from "../dist/index.js";
 
-const SCHEMA = "reflex.tick@2";
+const SCHEMAS = new Set(["reflex.tick@2", "reflex.tick@3"]);
 const PERSON = /^p[1-9]$/;
 const NOUL_KEYS = [
   "addressed", "addressed_by_gaze", "wants_reply", "pause_invites_ack",
@@ -47,7 +47,7 @@ function parseAnswers(value, line) {
 }
 
 function parseRow(value, line) {
-  if (!isRecord(value) || value.schema !== SCHEMA
+  if (!isRecord(value) || !SCHEMAS.has(value.schema)
     || !Number.isSafeInteger(value.policy_epoch) || value.policy_epoch < 0
     || !finite(value.policy_clock_ms) || value.policy_clock_ms < 0
     || !Array.isArray(value.people) || value.people.length > 9
@@ -56,6 +56,8 @@ function parseRow(value, line) {
     || new Set(value.people.map((person) => person.id)).size !== value.people.length
     || (value.most_recent_speaker !== undefined && !PERSON.test(value.most_recent_speaker))
     || typeof value.robot_speaking !== "boolean" || typeof value.stale !== "boolean"
+    || (value.schema === "reflex.tick@3" && (typeof value.robot_speaking_known !== "boolean"
+      || (!value.robot_speaking_known && value.robot_speaking)))
     || !isRecord(value.decision) || !isRecord(value.decision.target)
     || !(value.decision.gaze === "none" || PERSON.test(value.decision.gaze))
     || typeof value.decision.nod !== "boolean" || typeof value.decision.idle !== "boolean"

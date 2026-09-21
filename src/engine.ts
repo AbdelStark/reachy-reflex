@@ -68,9 +68,26 @@ export class ReflexEngine {
   }
   async tick(observation: RoomObservation, nowMs: number): Promise<EngineTick | undefined> {
     const generation = this.generation;
-    const state = buildRoomState(observation);
-    const ids = state.people.map((person) => person.id);
-    const questions = toTypeSafeQuestions(REFLEX_BANK, ids);
+    let prepared: {
+      state: ReturnType<typeof buildRoomState>;
+      ids: string[];
+      questions: ReturnType<typeof toTypeSafeQuestions>;
+    };
+    try {
+      if (!Number.isFinite(nowMs)) throw new RangeError("invalid time");
+      const state = buildRoomState(observation);
+      const ids = state.people.map((person) => person.id);
+      prepared = { state, ids, questions: toTypeSafeQuestions(REFLEX_BANK, ids) };
+    } catch (error) {
+      this.invalidate();
+      return {
+        output: this.policy.step({ nowMs: Number.isFinite(nowMs) ? nowMs : 0, people: [], robotSpeaking: false, stale: true }),
+        panel: stalePanelFrame(),
+        stale: true,
+        error: error instanceof Error ? error.name : "InvalidObservation",
+      };
+    }
+    const { state, ids, questions } = prepared;
     const lastSpeaker = observation.transcriptRecent?.at(-1)?.who;
     const mostRecentSpeaker = lastSpeaker && /^p[1-9]$/.test(lastSpeaker) ? lastSpeaker as PersonId : undefined;
     const input = {

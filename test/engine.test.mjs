@@ -85,6 +85,24 @@ test("network failure leaves robot in idle rather than producing a new motion de
   assert.deepEqual(result.panel, { gauges: [], stale: true });
 });
 
+test("ambiguous person IDs invalidate evidence before any model call or motion", async () => {
+  let calls = 0;
+  const engine = new ReflexEngine(new JevClient({ ask: async () => {
+    calls++;
+    return { answers: answers() };
+  } }));
+  await engine.tick(observation, 0);
+  const invalid = await engine.tick({ people: [{ id: "p1" }, { id: "p1" }] }, 250);
+  assert.equal(invalid.stale, true);
+  assert.equal(invalid.output.idle, true);
+  assert.equal(invalid.output.gaze, "none");
+  assert.deepEqual(invalid.panel, { gauges: [], stale: true });
+  assert.equal(calls, 1);
+  const recovered = await engine.tick(observation, 500);
+  assert.equal(recovered.stale, false);
+  assert.equal(calls, 2);
+});
+
 test("invalidating an in-flight reply keeps old evidence out of the next policy epoch", async () => {
   let release;
   let calls = 0;

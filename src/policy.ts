@@ -3,7 +3,7 @@ import { attend, droop, engaged, Hysteresis, Refractory, type PoseTarget } from 
 export type PersonId = `p${number}`;
 export interface Noul { noul: number }
 export interface Choice<T extends string> { choice: T; confidence: number; probabilities?: Record<T, number> }
-export interface Score { score: string; probabilities?: Record<string, number> }
+export interface Score { score: number; probabilities?: Record<string, number> }
 export interface ReflexAnswers {
   attention_target: Choice<PersonId | "none">;
   addressed: Noul;
@@ -25,7 +25,6 @@ export interface ReflexInput {
 export type ReflexEvent = { type: "user_addressed" | "yield" | "interrupt" | "attention"; person?: PersonId; p?: number };
 export interface ReflexOutput { target: PoseTarget; gaze: PersonId | "none"; nod: boolean; events: ReflexEvent[]; idle: boolean }
 
-const levelIndex: Record<string, number> = { none: 0, low: 1, medium: 2, high: 3, intense: 4 };
 const validP = (p: number) => Number.isFinite(p) && p >= 0 && p <= 1;
 export class ReflexPolicy {
   private gaze: PersonId | "none" = "none";
@@ -84,7 +83,7 @@ export class ReflexPolicy {
     }
     const person = input.people.find((p) => p.id === this.gaze);
     const gazePose = attend(person?.bearingDeg ?? 0);
-    const engagement = levelIndex[answers.engagement.score] ?? 0;
+    const engagement = Number.isFinite(answers.engagement.score) ? Math.max(0, Math.min(4, answers.engagement.score)) : 0;
     const engagePose = engaged(engagement);
     this.lastTarget = { ...gazePose, pitchDeg: gazePose.pitchDeg + engagePose.pitchDeg, zMm: gazePose.zMm + engagePose.zMm, rightAntennaDeg: engagePose.rightAntennaDeg, leftAntennaDeg: engagePose.leftAntennaDeg };
     return { target: this.lastTarget, gaze: this.gaze, nod, events, idle: false };

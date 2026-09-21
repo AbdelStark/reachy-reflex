@@ -5,7 +5,7 @@ import { REFLEX_BANK, ReflexPolicy } from "../dist/index.js";
 const base = () => ({
   attention_target: { choice: "p1", confidence: 0.9 }, addressed: { noul: 0.2 }, addressed_by_gaze: { noul: 0.2 },
   pause_invites_ack: { noul: 0.1 }, being_ignored: { noul: 0.1 },
-  turn_action: { choice: "keep_talking", confidence: 0.9 }, engagement: { score: "medium" }, speaker_mood: { choice: "neutral", confidence: 0.8 },
+  turn_action: { choice: "keep_talking", confidence: 0.9 }, engagement: { score: 2 }, speaker_mood: { choice: "neutral", confidence: 0.8 },
 });
 const tick = (nowMs, answers = base(), extra = {}) => ({ nowMs, people: [{ id: "p1", bearingDeg: -20 }], mostRecentSpeaker: "p1", robotSpeaking: false, answers, stale: false, ...extra });
 

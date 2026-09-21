@@ -8,6 +8,7 @@ import { RobotMotionController } from "./motion.js";
 import { PerceptionState } from "./perception.js";
 import { RelayTransport } from "./relay.js";
 import { VideoFaceDetector } from "./vision.js";
+import { BrowserSpeechInput, RecentTranscripts, browserRecognition } from "./speech.js";
 import "./style.css";
 
 type Host = Awaited<ReturnType<typeof connectToHost>>;
@@ -30,6 +31,8 @@ function mountApp(host?: Host): void {
       <section class="controls" aria-label="Run controls"><div class="control-copy"><h2>Run the loop</h2><p>${preview ? "Inspect the interface with synthetic faces and answers." : "Only bucketed state is sent to the relay. The API key stays server-side. Face frames stay in this browser."}</p></div>
         <form id="relay-form" ${preview ? "hidden" : ""}><label>Relay URL<input id="relay-url" type="url" value="http://127.0.0.1:8048" required autocomplete="url"></label><label>Session token<input id="relay-token" type="password" required minlength="32" autocomplete="off"></label><button type="submit">Connect Jev relay</button></form>
         <label class="tracking-toggle" ${preview ? "hidden" : ""}><input id="tracking-enable" type="checkbox"><span>Enable face tracking. Frames stay here; MediaPipe may send usage metrics to Google.</span></label>
+        <label class="tracking-toggle speech-consent"><input id="speech-consent" type="checkbox"><span>Use this device's microphone for browser speech recognition. The browser may send audio to its vendor; up to two final utterances (200 characters each) go to Jev through the configured relay. No speaker identity is inferred.</span></label>
+        <button id="speech-toggle" type="button">Start transcription</button><p id="speech-status" role="status" aria-live="polite">Microphone off; no transcript is sent.</p>
         <label class="motion-toggle" ${preview ? "hidden" : ""}><input id="motion-enable" type="checkbox" disabled><span>Enable experimental robot motion</span></label>
         <p id="status" role="status" aria-live="polite">${preview ? "Preview running with fixture-only answers." : "Connect a relay before judging the room. Motion stays off until enabled."}</p>
       </section>
@@ -44,7 +47,59 @@ function mountApp(host?: Host): void {
   const panel = q<JevPanelElement>("#jev-panel");
   const motionToggle = q<HTMLInputElement>("#motion-enable");
   const trackingToggle = q<HTMLInputElement>("#tracking-enable");
+  const speechConsent = q<HTMLInputElement>("#speech-consent");
+  const speechToggle = q<HTMLButtonElement>("#speech-toggle");
+  const speechStatus = q<HTMLElement>("#speech-status");
   const perception = new PerceptionState();
+  const transcripts = new RecentTranscripts();
+  let speechSharing = false;
+  const speech = new BrowserSpeechInput(
+    browserRecognition,
+    (text) => {
+      if (speechSharing && transcripts.accept(text, performance.now())) {
+        speechStatus.textContent = "Final utterance captured. Recent text may be sent to Jev for 30 seconds.";
+      }
+    },
+    (status) => {
+      speechToggle.textContent = "Start transcription";
+      speechStatus.textContent = status === "error"
+        ? "Speech recognition failed. Recent text stays for up to 30 seconds unless you uncheck consent."
+        : "Recognition ended. Recent text stays for up to 30 seconds unless you uncheck consent.";
+    },
+  );
+  speechToggle.disabled = !("SpeechRecognition" in window || "webkitSpeechRecognition" in window);
+  if (speechToggle.disabled) speechStatus.textContent = "SpeechRecognition is unavailable in this browser; no transcript is sent.";
+  speechConsent.addEventListener("change", () => {
+    if (!speechConsent.checked) {
+      speech.stop();
+      speechSharing = false;
+      transcripts.clear();
+      speechToggle.textContent = "Start transcription";
+      speechStatus.textContent = "Microphone off; recent text cleared. An in-flight relay request cannot be recalled.";
+    } else speechStatus.textContent = "Consent set for this tab. Press Start transcription to listen.";
+  });
+  speechToggle.addEventListener("click", () => {
+    if (speech.active) {
+      speech.stop();
+      speechSharing = false;
+      transcripts.clear();
+      speechToggle.textContent = "Start transcription";
+      speechStatus.textContent = "Microphone off; recent text cleared. An in-flight relay request cannot be recalled.";
+      return;
+    }
+    if (!speechConsent.checked) {
+      speechStatus.textContent = "Check microphone consent before starting transcription.";
+      return;
+    }
+    speechSharing = true;
+    if (!speech.start()) {
+      speechSharing = false;
+      speechStatus.textContent = "Speech recognition could not start; check browser support and microphone permission.";
+      return;
+    }
+    speechToggle.textContent = "Stop transcription";
+    speechStatus.textContent = "Listening on this device. Only final text is kept briefly in this tab.";
+  });
   const motion = host ? new RobotMotionController(host.reachy) : undefined;
   let detector: VideoFaceDetector | undefined;
   let engine: ReflexEngine | undefined = preview ? new ReflexEngine(new JevClient({ ask: fixtureAsk })) : undefined;
@@ -127,6 +182,7 @@ function mountApp(host?: Host): void {
       }
       const observation = perception.snapshot(now);
       if (preview && fixturePerson) observation.transcriptRecent = [{ who: "p1", text: "Reachy, are you listening?" }];
+      if (speechSharing) observation.transcriptRecent = transcripts.snapshot(now);
       const result = await engine.tick(observation, now);
       if (!active) return;
       panel.update(preview ? { ...result.panel, source: "fixture" } : result.panel);
@@ -152,6 +208,9 @@ function mountApp(host?: Host): void {
     clearInterval(detectTimer);
     motion?.setEnabled(false);
     detector?.close();
+    speech.stop();
+    transcripts.clear();
+    speechSharing = false;
     detachVideo?.();
     perception.clear();
   };

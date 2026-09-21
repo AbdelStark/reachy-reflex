@@ -47,3 +47,38 @@ test("verified local model initializes MediaPipe with browser assets on this ori
   expect(localAssets.some((url) => url.endsWith(".wasm"))).toBe(true);
   expect(thirdParty.every((url) => url.startsWith("https://odml.pa.googleapis.com/v1/log"))).toBe(true);
 });
+
+test("microphone transcript path is opt-in, final-only, and cleared on stop", async ({ page }) => {
+  const jevRequests: string[] = [];
+  page.on("request", (request) => { if (request.url().includes("/v1/systemone")) jevRequests.push(request.url()); });
+  await page.addInitScript(() => {
+    class FakeRecognition {
+      continuous = false;
+      interimResults = true;
+      lang = "";
+      onresult: ((event: { resultIndex: number; results: { isFinal: boolean; 0: { transcript: string } }[] }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onend: (() => void) | null = null;
+      start() { (window as unknown as { fakeRecognition: FakeRecognition }).fakeRecognition = this; }
+      abort() {}
+      emit(text: string, isFinal: boolean) { this.onresult?.({ resultIndex: 0, results: [{ isFinal, 0: { transcript: text } }] }); }
+    }
+    (window as unknown as { SpeechRecognition: typeof FakeRecognition }).SpeechRecognition = FakeRecognition;
+  });
+  await page.goto("/?preview=1");
+  const addressed = page.locator("jev-panel").locator("jev-gauge").filter({ hasText: "Addressed" }).first().locator(".value");
+  await expect(addressed).toHaveText("20%");
+  await page.getByRole("button", { name: "Start transcription" }).click();
+  await expect(page.locator("#speech-status")).toContainText("Check microphone consent");
+  await page.locator("#speech-consent").check();
+  await page.getByRole("button", { name: "Start transcription" }).click();
+  await page.evaluate(() => (window as unknown as { fakeRecognition: { emit(text: string, isFinal: boolean): void } }).fakeRecognition.emit("Reachy, please look here", false));
+  await expect(addressed).toHaveText("20%");
+  await page.evaluate(() => (window as unknown as { fakeRecognition: { emit(text: string, isFinal: boolean): void } }).fakeRecognition.emit("Reachy, please look here", true));
+  await expect(page.locator("#speech-status")).toContainText("Final utterance captured");
+  await expect(addressed).toHaveText("90%");
+  await page.getByRole("button", { name: "Stop transcription" }).click();
+  await expect(page.locator("#speech-status")).toContainText("recent text cleared");
+  await expect(addressed).toHaveText("20%");
+  expect(jevRequests).toEqual([]);
+});

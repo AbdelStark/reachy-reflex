@@ -8,6 +8,6 @@ if (params.get("preview") === "1" || params.get("embedded") === "1" || params.ge
   void import("./embed.js");
 } else {
   void import("@pollen-robotics/reachy-mini-sdk/host/auto").then(({ mountHost }) => {
-    mountHost({ appName: "Reachy Reflex", appIconUrl: "/icon.svg", appEmoji: "⚡", enableMicrophone: false });
+    mountHost({ appName: "Reachy Reflex", appIconUrl: "/icon.svg", appEmoji: "⚡", enableMicrophone: true });
   });
 }

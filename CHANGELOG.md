@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Align the shared `reachy-jev` pin with the typed question-wire release used by the other Reachy apps; the question set and expected wire digest are unchanged.
 - Reject frames with more than nine detected faces instead of truncating the room; clear prior labels, pause judgments, disarm motion, and require a recovered scene plus explicit re-arm. Unit and fake-host browser tests cover the overflow and recovery path.
 - Pin the shared question-bank validator that rejects malformed/unknown question kinds before wire projection; test the 16-question and empty-room expansions against the installed package.
 - Recycle an unmatched face label when all nine labels are reserved but a within-cap frame has a newcomer; invalidate the prior policy/model epoch so an in-flight answer cannot follow the reused label.

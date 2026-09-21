@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Pin the shared question-bank validator that rejects malformed/unknown question kinds before wire projection; test the 16-question and empty-room expansions against the installed package.
 - Recycle an unmatched face label when all nine labels are reserved but a within-cap frame has a newcomer; invalidate the prior policy/model epoch so an in-flight answer cannot follow the reused label. Do not recycle on truncated crowded frames.
 - Version local traces as `reflex.tick@2` with explicit policy reset epochs and add a bounded offline replay command for exported judgments; tracing begins from a fresh policy state, while model and robot execution remain outside replay.
 - Fence in-flight judgments across observation/consent/motion context changes, reset policy hysteresis and the Jev cache, and require fresh evidence before resuming decisions.

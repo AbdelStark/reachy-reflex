@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { toTypeSafeQuestions } from "reachy-jev";
 import { REFLEX_BANK, ReflexPolicy } from "../dist/index.js";
 
 const base = () => ({
@@ -12,6 +13,8 @@ const tick = (nowMs, answers = base(), extra = {}) => ({ nowMs, people: [{ id: "
 test("bank contains 16 typed questions and a dynamic person choice", () => {
   assert.equal(Object.keys(REFLEX_BANK.questions).length, 16);
   assert.deepEqual(REFLEX_BANK.questions.attention_target.options, ["$people.ids", "none"]);
+  assert.equal(Object.keys(toTypeSafeQuestions(REFLEX_BANK, ["p1"])).length, 16);
+  assert.deepEqual(toTypeSafeQuestions(REFLEX_BANK, []).attention_target.criteria, { none: null });
 });
 
 test("gaze requires two stable ticks but direct address snaps immediately", () => {

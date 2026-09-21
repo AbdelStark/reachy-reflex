@@ -23,7 +23,7 @@
     "@mediapipe/tasks-vision": "1.0.1",
     "@pollen-robotics/reachy-mini-sdk": "1.8.0",
     "@typesafe-ai/sdk": "0.6.0",
-    "reachy-jev": "git+https://github.com/AbdelStark/reachy-jev.git#a848537f27012310dde5a7ee044166ada05521a8"
+    "reachy-jev": "git+https://github.com/AbdelStark/reachy-jev.git#69593c1e02c83cdee63725ce34eaaf2c78dc9a80"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",

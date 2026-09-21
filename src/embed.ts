@@ -11,6 +11,7 @@ import { VideoFaceDetector } from "./vision.js";
 import { BrowserSpeechInput, RecentTranscripts, browserRecognition } from "./speech.js";
 import { RobotSoundInput } from "./sound.js";
 import { LocalRobotAsrPort, RobotSpeechInput } from "./robot_speech.js";
+import { SessionTrace, type MotionOutcome } from "./trace.js";
 import "./style.css";
 
 type Host = Awaited<ReturnType<typeof connectToHost>>;
@@ -42,6 +43,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
         <label class="tracking-toggle speech-consent"><input id="speech-consent" type="checkbox"><span>Use this device's microphone for browser speech recognition. The browser may send audio to its vendor; up to two final utterances (200 characters each) go to Jev through the configured relay. No speaker identity is inferred.</span></label>
         <button id="speech-toggle" type="button">Start transcription</button><p id="speech-status" role="status" aria-live="polite">Microphone off; no transcript is sent.</p>
         <label class="motion-toggle" ${preview ? "hidden" : ""}><input id="motion-enable" type="checkbox" disabled><span>Enable experimental robot motion</span></label>
+        <div class="trace-controls"><label class="tracking-toggle"><input id="trace-enable" type="checkbox"><span>Record a local, text-free judgment trace for this tab. Ask nearby people first; the export includes approximate face bearings and model answers, but no frames, audio, or transcript text.</span></label><div><button id="trace-download" type="button" disabled>Download trace JSONL</button><button id="trace-clear" type="button" disabled>Discard trace</button></div><p id="trace-status" role="status" aria-live="polite">Trace off. Nothing saved.</p></div>
         <p id="status" role="status" aria-live="polite">${preview ? "Preview running with fixture-only answers." : "Connect a relay before judging the room. Motion stays off until enabled."}</p>
       </section>
       <footer>Face boxes are local and approximate. No identity recognition. No live accuracy, latency, or hardware claim yet.</footer>
@@ -63,6 +65,26 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
   const speechConsent = q<HTMLInputElement>("#speech-consent");
   const speechToggle = q<HTMLButtonElement>("#speech-toggle");
   const speechStatus = q<HTMLElement>("#speech-status");
+  const traceToggle = q<HTMLInputElement>("#trace-enable");
+  const traceDownload = q<HTMLButtonElement>("#trace-download");
+  const traceClear = q<HTMLButtonElement>("#trace-clear");
+  const traceStatus = q<HTMLElement>("#trace-status");
+  const trace = new SessionTrace();
+  const updateTraceStatus = () => {
+    traceDownload.disabled = traceClear.disabled = trace.count === 0;
+    traceStatus.textContent = `${traceToggle.checked ? "Recording" : "Trace off"}. ${trace.count} text-free ticks in this tab${preview ? " (fixture only)" : ""}.`;
+  };
+  traceToggle.addEventListener("change", updateTraceStatus);
+  traceClear.addEventListener("click", () => { trace.clear(); updateTraceStatus(); });
+  traceDownload.addEventListener("click", () => {
+    if (!trace.count) return;
+    const url = URL.createObjectURL(new Blob([trace.toJSONL()], { type: "application/x-ndjson" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "reflex-session.jsonl";
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  });
   const perception = new PerceptionState();
   const transcripts = new RecentTranscripts();
   let speechSharing = false;
@@ -338,9 +360,11 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
         && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
         && lastMotionSource && motionEvidenceCurrent({ ...lastMotionSource, deliveredAtMs,
           latestFrameAtMs: lastFrameAtMs, latestPeople: perception.snapshot(deliveredAtMs).people ?? [] }));
+      let motionOutcome: MotionOutcome = preview ? "preview" : motionToggle.checked ? "held" : "off";
       if (motionReady) {
-        try { motion!.apply(result.output, deliveredAtMs); }
+        try { motionOutcome = motion!.apply(result.output, deliveredAtMs) ? "accepted" : "not_accepted"; }
         catch {
+          motionOutcome = "error";
           motionEpoch++;
           lastMotionSource = undefined;
           motionToggle.checked = false;
@@ -349,6 +373,10 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
         }
       } else if (host && motionToggle.checked && !audioOnly && !result.stale) {
         q<HTMLElement>("#stream-note").textContent = "Judgment shown · motion held (scene changed or answer aged)";
+      }
+      if (traceToggle.checked) {
+        trace.add(observation, result, now, motionOutcome);
+        updateTraceStatus();
       }
     } catch (error) {
       if (active) q<HTMLElement>("#status").textContent = error instanceof Error ? error.message : "Tick failed";
@@ -371,6 +399,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
     sound?.stop();
     sound = undefined;
     transcripts.clear();
+    trace.clear();
     speechSharing = false;
     detachVideo?.();
     perception.clear();

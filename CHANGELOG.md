@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add an off-by-default, bounded five-minute judgment trace with typed answers, policy output, motion-dispatch outcome, browser JSONL download/discard, and no raw text or media fields; fixture and unit tests verify redaction and retention.
 - Bind robot motion to a fresh, stable source observation across slow and cached Jev answers; invalidate in-flight motion on tracking or motion changes, and hold commands when faces drift or video stalls.
 - Allow separately consented final text to drive panel-only judgments when face tracking is absent; keep person attribution unknown and motion off, and idle the panel when text expires.
 - Add separately consented robot-stream ASR through a bounded, authenticated loopback faster-whisper adapter. Ship no model weights and make no robust VAD, DoA, speaker, or robot-validation claim.

@@ -54,7 +54,7 @@ export function typeSafeTransport(client: TypeSafeClient) {
   };
 }
 
-export interface EngineTick { output: ReflexOutput; panel: PanelFrame; model?: string; latencyMs?: number; skipped?: boolean; stale: boolean; error?: string }
+export interface EngineTick { output: ReflexOutput; panel: PanelFrame; answers?: ReflexAnswers; model?: string; latencyMs?: number; skipped?: boolean; stale: boolean; error?: string }
 export class ReflexEngine {
   constructor(private readonly client: JevClient, private readonly policy = new ReflexPolicy()) {}
   async tick(observation: RoomObservation, nowMs: number): Promise<EngineTick> {
@@ -77,7 +77,7 @@ export class ReflexEngine {
     }
     try {
       const answers = parse(response.answers, ids);
-      return { output: this.policy.step({ ...input, answers, stale: response.stale }), panel: reflexPanelFrame(answers, { stale: response.stale, skipped: response.skipped, latencyMs: response.latencyMs, ...(response.model ? { model: response.model } : {}) }), stale: response.stale, ...(response.model ? { model: response.model } : {}), latencyMs: response.latencyMs, skipped: response.skipped };
+      return { output: this.policy.step({ ...input, answers, stale: response.stale }), panel: reflexPanelFrame(answers, { stale: response.stale, skipped: response.skipped, latencyMs: response.latencyMs, ...(response.model ? { model: response.model } : {}) }), answers, stale: response.stale, ...(response.model ? { model: response.model } : {}), latencyMs: response.latencyMs, skipped: response.skipped };
     } catch (error) {
       return { output: this.policy.step({ ...input, stale: true }), panel: stalePanelFrame(response.model), stale: true, error: error instanceof Error ? error.name : "InvalidAnswer" };
     }

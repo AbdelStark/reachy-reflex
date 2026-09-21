@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 
 test("fixture preview renders all 16 signals and reacts to synthetic room changes", async ({ page }) => {
   const requests: string[] = [];
@@ -15,6 +16,28 @@ test("fixture preview renders all 16 signals and reacts to synthetic room change
   await page.getByRole("button", { name: "Empty room" }).click();
   await expect(page.locator("#person-count")).toHaveText("0");
   expect(requests).toEqual([]);
+});
+
+test("trace is opt-in, bounded to this tab, downloadable, and text-free", async ({ page }) => {
+  await page.goto("/?preview=1");
+  await expect(page.locator("#trace-download")).toBeDisabled();
+  await page.locator("#trace-enable").check();
+  await page.getByRole("button", { name: "Simulate a person" }).click();
+  await expect(page.locator("#trace-download")).toBeEnabled();
+  const downloadPromise = page.waitForEvent("download");
+  await page.locator("#trace-download").click();
+  const download = await downloadPromise;
+  const path = await download.path();
+  expect(path).not.toBeNull();
+  const rows = (await readFile(path!, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+  expect(rows[0].schema).toBe("reflex.tick@1");
+  expect(rows[0].decision.motion).toBe("preview");
+  expect(rows.some((row) => row.people.some((person: { id: string }) => person.id === "p1"))).toBe(true);
+  expect(rows.every((row) => !("transcript" in row) && !("frames" in row))).toBe(true);
+  await page.locator("#trace-enable").uncheck();
+  await page.locator("#trace-clear").click();
+  await expect(page.locator("#trace-download")).toBeDisabled();
+  await expect(page.locator("#trace-status")).toContainText("Trace off. 0 text-free ticks");
 });
 
 test("preview fits a narrow mobile viewport and serves local MediaPipe Wasm", async ({ page, request }) => {

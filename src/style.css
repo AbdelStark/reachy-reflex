@@ -54,6 +54,9 @@ form button { white-space:nowrap; }
 #speech-toggle { align-self:center; }
 #speech-status,#sound-status,#robot-speech-status { grid-column:1/-1; margin:0; color:#a9c0d0; font-size:12px; line-height:1.4; }
 #sound-status[hidden],#robot-speech-status[hidden] { display:none; }
+.trace-controls { grid-column:1/-1; display:grid; gap:10px; padding:14px; border:1px solid #34516a; border-radius:12px; background:#0d1929; }
+.trace-controls > div { display:flex; flex-wrap:wrap; gap:8px; }
+#trace-status { margin:0; color:#a9c0d0; font-size:12px; }
 #status { grid-column:1/-1; margin:0; color:#9edbd5; font-size:13px; }
 footer { margin-top:20px; color:#758b9f; font-size:12px; line-height:1.5; }
 @media (max-width:1100px) { .controls { grid-template-columns:1fr 1fr; } .control-copy { grid-column:1/-1; } form { flex-wrap:wrap; } }

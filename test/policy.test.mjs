@@ -44,10 +44,26 @@ test("turn events only fire during robot speech and stale answers return to idle
   assert.equal(policy.step(tick(0, yieldAnswer)).events.some((e) => e.type === "yield"), false);
   const fresh = policy.step(tick(250, yieldAnswer, { robotSpeaking: true }));
   assert.equal(fresh.events.some((e) => e.type === "yield"), true);
+  assert.equal(policy.step(tick(300, yieldAnswer, { robotSpeaking: true })).events.some((e) => e.type === "yield"), false);
   const stale = policy.step(tick(500, yieldAnswer, { stale: true }));
   assert.deepEqual(stale.target, fresh.target);
   assert.deepEqual(stale.events, []);
   assert.equal(policy.step(tick(2600, yieldAnswer, { stale: true })).idle, true);
+});
+
+test("new speaker can trigger a fresh address and a moderate address resets ignored timer", () => {
+  const policy = new ReflexPolicy();
+  const addressed = base(); addressed.addressed.noul = 0.8;
+  const first = policy.step(tick(0, addressed));
+  assert.equal(first.events.filter((e) => e.type === "user_addressed").length, 1);
+  const second = policy.step({ ...tick(250, addressed), people: [{ id: "p2", bearingDeg: 15 }], mostRecentSpeaker: "p2" });
+  assert.equal(second.events.find((e) => e.type === "user_addressed")?.person, "p2");
+
+  const ignored = base(); ignored.being_ignored.noul = 0.8;
+  policy.step(tick(1000, ignored));
+  const partialAddress = base(); partialAddress.addressed.noul = 0.5; partialAddress.being_ignored.noul = 0.8;
+  policy.step(tick(19_000, partialAddress));
+  assert.notEqual(policy.step(tick(20_999, ignored)).target.zMm, -6);
 });
 
 test("ignored timer droops only after 20 seconds", () => {
@@ -55,4 +71,16 @@ test("ignored timer droops only after 20 seconds", () => {
   const ignored = base(); ignored.being_ignored.noul = 0.8;
   assert.notDeepEqual(policy.step(tick(0, ignored)).target.zMm, -6);
   assert.equal(policy.step(tick(20_000, ignored)).target.zMm, -6);
+});
+
+test("missing attention target drifts to idle scan after three seconds", () => {
+  const policy = new ReflexPolicy();
+  policy.step(tick(0));
+  assert.equal(policy.step(tick(250)).gaze, "p1");
+  const noTarget = base(); noTarget.attention_target = { choice: "none", confidence: 0.9 };
+  assert.equal(policy.step(tick(500, noTarget)).gaze, "p1");
+  assert.equal(policy.step(tick(3400, noTarget)).idle, false);
+  const scan = policy.step(tick(3500, noTarget));
+  assert.equal(scan.idle, true);
+  assert.equal(scan.gaze, "none");
 });

@@ -34,6 +34,9 @@ export class ReflexPolicy {
   private ignoredSince: number | undefined;
   private lastFresh: number | undefined;
   private lastAddressHigh = false;
+  private lastAddressPerson: PersonId | undefined;
+  private lastTurnEvent: "yield" | "interrupt" | undefined;
+  private noTargetSince: number | undefined;
   private lastTarget: PoseTarget = attend(0);
   step(input: ReflexInput): ReflexOutput {
     if (!Number.isFinite(input.nowMs)) throw new RangeError("invalid time");
@@ -50,36 +53,61 @@ export class ReflexPolicy {
       this.gazeHysteresis.reset();
       this.lastNodHigh = false;
       this.lastAddressHigh = false;
+      this.lastAddressPerson = undefined;
+      this.lastTurnEvent = undefined;
+      this.noTargetSince = undefined;
       this.lastTarget = { ...attend(25 * Math.sin(input.nowMs * 0.00016 * 2 * Math.PI)), pitchDeg: 0, zMm: 0 };
       return { target: this.lastTarget, gaze: "none", nod: false, events, idle: true };
     }
     const pAddress = answers.addressed.noul;
     const pGaze = answers.addressed_by_gaze.noul;
     const addressHigh = (validP(pAddress) && pAddress >= 0.7) || (validP(pGaze) && pGaze >= 0.8);
-    if (fresh && addressHigh && !this.lastAddressHigh && input.mostRecentSpeaker && input.people.some((p) => p.id === input.mostRecentSpeaker)) {
+    if (fresh && addressHigh && input.mostRecentSpeaker && (!this.lastAddressHigh || this.lastAddressPerson !== input.mostRecentSpeaker) && input.people.some((p) => p.id === input.mostRecentSpeaker)) {
       this.gaze = input.mostRecentSpeaker;
       this.gazeHysteresis.reset();
       events.push({ type: "user_addressed", person: this.gaze, p: Math.max(pAddress, pGaze) });
+      this.lastAddressPerson = input.mostRecentSpeaker;
     }
     this.lastAddressHigh = addressHigh;
+    if (!addressHigh) this.lastAddressPerson = undefined;
     const candidate = answers.attention_target;
+    const validTarget = validP(candidate.confidence) && candidate.confidence >= 0.6 && candidate.choice !== "none" && input.people.some((person) => person.id === candidate.choice);
+    if (validTarget || addressHigh) this.noTargetSince = undefined;
+    else this.noTargetSince ??= input.nowMs;
     if (fresh && validP(candidate.confidence) && candidate.confidence >= 0.6 && (candidate.choice === "none" || input.people.some((p) => p.id === candidate.choice))) {
-      const stable = this.gazeHysteresis.step(candidate.choice);
+      const stable = candidate.choice === "none" ? undefined : this.gazeHysteresis.step(candidate.choice);
       if (stable !== undefined && stable !== this.gaze) { this.gaze = stable; events.push({ type: "attention", ...(stable !== "none" ? { person: stable } : {}) }); }
     }
     const nodHigh = fresh && validP(answers.pause_invites_ack.noul) && answers.pause_invites_ack.noul >= 0.7;
     const nod = nodHigh && !this.lastNodHigh && !input.robotSpeaking && this.nodRefractory.fire(input.nowMs);
     this.lastNodHigh = nodHigh;
+    let turnEvent: "yield" | "interrupt" | undefined;
+    let turnP = 0;
     if (fresh && input.robotSpeaking && validP(answers.turn_action.confidence)) {
-      if (answers.turn_action.choice === "yield" && answers.turn_action.confidence >= 0.7) events.push({ type: "yield", p: answers.turn_action.confidence });
-      if (answers.turn_action.choice === "interrupt" && (answers.turn_action.probabilities?.interrupt ?? answers.turn_action.confidence) >= 0.8) events.push({ type: "interrupt", p: answers.turn_action.probabilities?.interrupt ?? answers.turn_action.confidence });
+      if (answers.turn_action.choice === "yield" && answers.turn_action.confidence >= 0.7) {
+        turnEvent = "yield";
+        turnP = answers.turn_action.confidence;
+      }
+      const interruptP = answers.turn_action.probabilities?.interrupt ?? answers.turn_action.confidence;
+      if (answers.turn_action.choice === "interrupt" && validP(interruptP) && interruptP >= 0.8) {
+        turnEvent = "interrupt";
+        turnP = interruptP;
+      }
     }
-    if (fresh && validP(answers.being_ignored.noul) && answers.being_ignored.noul >= 0.7 && !addressHigh) this.ignoredSince ??= input.nowMs;
+    if (turnEvent && turnEvent !== this.lastTurnEvent) events.push({ type: turnEvent, p: turnP });
+    this.lastTurnEvent = turnEvent;
+    if (fresh && validP(answers.being_ignored.noul) && answers.being_ignored.noul >= 0.7 && !(validP(pAddress) && pAddress >= 0.5)) this.ignoredSince ??= input.nowMs;
     else this.ignoredSince = undefined;
     const ignored = this.ignoredSince !== undefined && input.nowMs - this.ignoredSince >= 20_000;
     if (ignored) {
       this.lastTarget = droop();
       return { target: this.lastTarget, gaze: "none", nod: false, events, idle: false };
+    }
+    if (this.noTargetSince !== undefined && input.nowMs - this.noTargetSince >= 3000) {
+      this.gaze = "none";
+      this.gazeHysteresis.reset();
+      this.lastTarget = { ...attend(25 * Math.sin(input.nowMs * 0.00016 * 2 * Math.PI)), pitchDeg: 0, zMm: 0 };
+      return { target: this.lastTarget, gaze: "none", nod: false, events, idle: true };
     }
     const person = input.people.find((p) => p.id === this.gaze);
     const gazePose = attend(person?.bearingDeg ?? 0);

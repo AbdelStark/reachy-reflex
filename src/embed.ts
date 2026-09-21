@@ -31,7 +31,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
           <div class="stage-foot"><div><span class="metric-label">Visible people</span><strong id="person-count">0</strong></div><div><span class="metric-label">Tick</span><strong id="tick-count">0</strong></div><div><span class="metric-label">Decision</span><strong id="decision">Idle</strong></div></div>
           <div id="preview-controls" class="preview-controls" ${preview ? "" : "hidden"}><p>Fixture preview · no Jev call, camera, or robot motion.</p><button id="preview-person" type="button">Simulate a person</button><button id="preview-empty" type="button">Empty room</button></div>
         </section>
-        <section class="brain" aria-label="Decision signals"><div class="brain-head"><p class="eyebrow">INSIDE THE LOOP</p><h2>Live judgment stream</h2><p id="stream-note">${preview ? "Deterministic fixture answers" : "Waiting for local Jev relay"}</p></div><jev-panel id="jev-panel"></jev-panel><p id="usage-note" class="fine-print" role="status">${preview ? "Fixture preview · no model cost." : formatUsage({ reportedCalls: 0, inputTokens: 0, outputTokens: 0, unresolvedCalls: 0, pendingCalls: 0 })}</p><p class="fine-print">Gauges show typed judgments; code gates every motion. This display is not a safety controller.</p></section>
+        <section class="brain" aria-label="Decision signals"><div class="brain-head"><div><p class="eyebrow">INSIDE THE LOOP</p><h2>Live judgment stream</h2><p id="stream-note">${preview ? "Deterministic fixture answers" : "Waiting for local Jev relay"}</p></div><button id="brain-fullscreen" type="button" aria-pressed="false">Full-screen panel</button></div><jev-panel id="jev-panel"></jev-panel><p id="usage-note" class="fine-print" role="status">${preview ? "Fixture preview · no model cost." : formatUsage({ reportedCalls: 0, inputTokens: 0, outputTokens: 0, unresolvedCalls: 0, pendingCalls: 0 })}</p><p class="fine-print">Gauges show typed judgments; code gates every motion. This display is not a safety controller.</p><p id="brain-fullscreen-status" class="fine-print" role="status">Panel in page. Full screen changes presentation only.</p></section>
       </div>
       <section class="controls" aria-label="Run controls"><div class="control-copy"><h2>Run the loop</h2><p>${preview ? "Inspect the interface with synthetic faces and answers." : "Only bucketed state is sent to the relay. The API key stays server-side. Face frames stay in this browser."}</p></div>
         <form id="relay-form" ${preview ? "hidden" : ""}><label>Relay URL<input id="relay-url" type="url" value="http://127.0.0.1:8048" required autocomplete="url"></label><label>Session token<input id="relay-token" type="password" required minlength="32" autocomplete="off"></label><button type="submit">Connect Jev relay</button></form>
@@ -59,6 +59,31 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
     return element;
   };
   const video = q<HTMLVideoElement>("#robot-video");
+  const brain = q<HTMLElement>(".brain");
+  const fullscreenButton = q<HTMLButtonElement>("#brain-fullscreen");
+  const fullscreenStatus = q<HTMLElement>("#brain-fullscreen-status");
+  const syncFullscreen = () => {
+    const expanded = document.fullscreenElement === brain;
+    fullscreenButton.textContent = expanded ? "Exit full screen" : "Full-screen panel";
+    fullscreenButton.setAttribute("aria-pressed", String(expanded));
+    fullscreenStatus.textContent = expanded
+      ? "Full-screen panel view. Press Escape or the button to leave; this is display only."
+      : "Panel in page. Full screen changes presentation only.";
+  };
+  if (!brain.requestFullscreen || !document.exitFullscreen) {
+    fullscreenButton.disabled = true;
+    fullscreenStatus.textContent = "Full screen is unavailable in this browser or host.";
+  } else {
+    fullscreenButton.addEventListener("click", async () => {
+      try {
+        if (document.fullscreenElement === brain) await document.exitFullscreen();
+        else await brain.requestFullscreen();
+      } catch {
+        fullscreenStatus.textContent = "Full screen was denied by this browser or host; panel remains in page.";
+      }
+    });
+    document.addEventListener("fullscreenchange", syncFullscreen);
+  }
   const panel = q<JevPanelElement>("#jev-panel");
   const usageNote = q<HTMLElement>("#usage-note");
   const motionToggle = q<HTMLInputElement>("#motion-enable");
@@ -540,6 +565,8 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
     active = false;
     invalidateJudgment();
     document.removeEventListener("visibilitychange", onVisibilityChange);
+    document.removeEventListener("fullscreenchange", syncFullscreen);
+    if (document.fullscreenElement === brain) void document.exitFullscreen().catch(() => {});
     detectorEpoch++;
     motionEpoch++;
     lastMotionSource = undefined;

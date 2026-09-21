@@ -23,6 +23,30 @@ test("fixture preview renders all 16 signals and reacts to synthetic room change
   expect(requests).toEqual([]);
 });
 
+test("brain panel enters and leaves display-only full screen without changing judgments", async ({ page }) => {
+  await page.goto("/?preview=1");
+  const button = page.getByRole("button", { name: "Full-screen panel" });
+  await expect(button).toBeEnabled();
+  await button.click();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement?.classList.contains("brain"))).toBe(true);
+  await expect(page.getByRole("button", { name: "Exit full screen" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("jev-panel").locator("jev-gauge")).toHaveCount(16);
+  await page.getByRole("button", { name: "Exit full screen" }).click();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement)).toBeNull();
+  await expect(page.getByRole("button", { name: "Full-screen panel" })).toHaveAttribute("aria-pressed", "false");
+});
+
+test("denied full screen leaves the panel readable in page", async ({ page }) => {
+  await page.addInitScript(() => {
+    HTMLElement.prototype.requestFullscreen = async () => { throw new Error("fixture host denies full screen"); };
+  });
+  await page.goto("/?preview=1");
+  await page.getByRole("button", { name: "Full-screen panel" }).click();
+  await expect(page.locator("#brain-fullscreen-status")).toContainText("denied");
+  await expect(page.locator("jev-panel").locator("jev-gauge")).toHaveCount(16);
+  await expect(page.getByRole("button", { name: "Full-screen panel" })).toHaveAttribute("aria-pressed", "false");
+});
+
 test("trace is opt-in, bounded to this tab, downloadable, and text-free", async ({ page }) => {
   await page.goto("/?preview=1");
   await expect(page.locator("#trace-download")).toBeDisabled();

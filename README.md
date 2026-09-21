@@ -36,7 +36,7 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-Run `npm run dev` and open `http://127.0.0.1:5173/?preview=1` for a robot-free fixture preview. Its simulated person and answers exercise the panel and policy but are not Jev or hardware results. The browser suite covers the 16 gauges, room changes, opt-in transcript path with a fake recognizer, a synthetic connected-host text-only judgment with no motion, local trace download/discard, narrow viewport, and locally served MediaPipe WebAssembly files. Unit tests cover tracking, stale observations, relay boundaries, motion gating, transcript bounds, and trace redaction/retention.
+Run `npm run dev` and open `http://127.0.0.1:5173/?preview=1` for a robot-free fixture preview. Its simulated person and answers exercise the panel and policy but are not Jev or hardware results. **Full-screen panel** expands the 16 gauges for a display or recording; Escape or the button returns to the page. It changes presentation only: it does not enable recording, a relay, or motion, and an already-running judgment loop continues under its existing settings. Browser/host iframe policy may deny full screen, in which case the panel stays in page. The browser suite covers the 16 gauges, full-screen entry/exit and denial, room changes, opt-in transcript path with a fake recognizer, a synthetic connected-host text-only judgment with no motion, local trace download/discard, narrow viewport, and locally served MediaPipe WebAssembly files. Unit tests cover tracking, stale observations, relay boundaries, motion gating, transcript bounds, and trace redaction/retention.
 
 ## Model-backed local use
 

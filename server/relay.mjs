@@ -1,5 +1,5 @@
 import { createServer } from "node:http";
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import WebSocket, { WebSocketServer } from "ws";
 
 const MAX_BODY = 32 * 1024;
@@ -11,6 +11,70 @@ const MAX_EVENTS_PER_MINUTE = 600;
 const MAX_SPEAKING_BYTES = 256;
 const SPEAKING_TTL_MS = 1500;
 const MAX_SPEAKING_PER_MINUTE = 120;
+// Digest of the reviewed reflex.core@0.1.0 wire with no people. At request
+// time only attention_target.criteria varies with the validated room IDs.
+const QUESTION_HASH = "a6e7fb2ea56f17db0664c172c202cd1b9cd61d5641878c2838fc1391379ee4e1";
+const BEARINGS = new Set(["far left", "left", "slightly left", "center", "slightly right", "right", "far right"]);
+const DISTANCES = new Set(["very near", "near", "medium", "far"]);
+const ELAPSED = new Set(["just now", "a few seconds", "about 10 seconds", "about half a minute", "about a minute", "over a minute", "never"]);
+const RECENT_ELAPSED = new Set([...ELAPSED].filter((value) => value !== "never"));
+const MOVING = new Set(["still", "shifting", "walking"]);
+const SOUND_LEVELS = new Set(["silent", "quiet", "conversational", "loud"]);
+const POSTURES = new Set(["idle", "attending", "nodding", "drooping"]);
+const PERSON_KEYS = new Set(["id", "bearing", "distance", "facing_robot", "looking_at_robot", "speaking", "seconds_since_last_spoke", "moving"]);
+const ROOM_KEYS = new Set(["schema", "people", "sound", "transcript_recent", "robot"]);
+const SOUND_KEYS = new Set(["loudest_bearing", "level", "voice_detected"]);
+const TRANSCRIPT_KEYS = new Set(["who", "text", "ended"]);
+const ROBOT_KEYS = new Set(["currently_speaking", "looking_at", "seconds_since_own_last_turn", "posture"]);
+const REQUEST_KEYS = new Set(["state", "questions"]);
+function record(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function onlyKeys(value, allowed, required = []) {
+  return record(value) && Object.keys(value).every((key) => allowed.has(key))
+    && required.every((key) => Object.hasOwn(value, key));
+}
+function validPerson(person) {
+  return onlyKeys(person, PERSON_KEYS, ["id"]) && typeof person.id === "string" && /^p[1-9]$/.test(person.id)
+    && (person.bearing === undefined || BEARINGS.has(person.bearing))
+    && (person.distance === undefined || DISTANCES.has(person.distance))
+    && (person.facing_robot === undefined || typeof person.facing_robot === "boolean")
+    && (person.looking_at_robot === undefined || typeof person.looking_at_robot === "boolean")
+    && (person.speaking === undefined || typeof person.speaking === "boolean")
+    && (person.seconds_since_last_spoke === undefined || ELAPSED.has(person.seconds_since_last_spoke))
+    && (person.moving === undefined || MOVING.has(person.moving));
+}
+function validRoom(state) {
+  if (!onlyKeys(state, ROOM_KEYS, ["schema", "people"]) || state.schema !== "room_state@1"
+    || !Array.isArray(state.people) || state.people.length > 9 || !state.people.every(validPerson)) return false;
+  const ids = state.people.map((person) => person.id);
+  if (new Set(ids).size !== ids.length) return false;
+  if (state.sound !== undefined && (!onlyKeys(state.sound, SOUND_KEYS)
+    || (state.sound.loudest_bearing !== undefined && !BEARINGS.has(state.sound.loudest_bearing))
+    || (state.sound.level !== undefined && !SOUND_LEVELS.has(state.sound.level))
+    || (state.sound.voice_detected !== undefined && typeof state.sound.voice_detected !== "boolean"))) return false;
+  if (state.transcript_recent !== undefined && (!Array.isArray(state.transcript_recent)
+    || state.transcript_recent.length > 4 || !state.transcript_recent.every((item) =>
+      onlyKeys(item, TRANSCRIPT_KEYS, ["who", "text"])
+      && typeof item.who === "string" && (item.who === "unknown" || /^p[1-9]$/.test(item.who))
+      && typeof item.text === "string" && item.text.length <= 200
+      && (item.ended === undefined || RECENT_ELAPSED.has(item.ended))))) return false;
+  if (state.robot !== undefined && (!onlyKeys(state.robot, ROBOT_KEYS)
+    || (state.robot.currently_speaking !== undefined && typeof state.robot.currently_speaking !== "boolean")
+    || (state.robot.looking_at !== undefined && (typeof state.robot.looking_at !== "string"
+      || (state.robot.looking_at !== "none" && !/^p[1-9]$/.test(state.robot.looking_at))))
+    || (state.robot.seconds_since_own_last_turn !== undefined && !RECENT_ELAPSED.has(state.robot.seconds_since_own_last_turn))
+    || (state.robot.posture !== undefined && !POSTURES.has(state.robot.posture)))) return false;
+  return true;
+}
+function validQuestions(questions, ids) {
+  if (!record(questions) || !record(questions.attention_target) || !record(questions.attention_target.criteria)) return false;
+  const criteria = questions.attention_target.criteria;
+  const names = Object.keys(criteria);
+  if (names.length !== ids.length + 1 || names.some((name, index) => name !== (ids[index] ?? "none") || criteria[name] !== null)) return false;
+  const pinned = { ...questions, attention_target: { ...questions.attention_target, criteria: { none: null } } };
+  return createHash("sha256").update(JSON.stringify(pinned)).digest("hex") === QUESTION_HASH;
+}
 
 function send(response, status, body, origin) {
   response.writeHead(status, {
@@ -28,12 +92,8 @@ function authorized(header, token) {
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
 }
 function validBody(body) {
-  return body && typeof body === "object" && !Array.isArray(body)
-    && body.state?.schema === "room_state@1"
-    && Array.isArray(body.state.people) && body.state.people.length <= 9
-    && body.questions && typeof body.questions === "object" && !Array.isArray(body.questions)
-    && Object.keys(body.questions).length === 16
-    && Object.values(body.questions).every((question) => question && typeof question === "object" && ["noul", "choice", "score"].includes(question.type));
+  return onlyKeys(body, REQUEST_KEYS, ["state", "questions"])
+    && validRoom(body.state) && validQuestions(body.questions, body.state.people.map((person) => person.id));
 }
 
 function validEvent(event) {

@@ -9,6 +9,7 @@ import { PerceptionState } from "./perception.js";
 import { RelayTransport } from "./relay.js";
 import { VideoFaceDetector } from "./vision.js";
 import { BrowserSpeechInput, RecentTranscripts, browserRecognition } from "./speech.js";
+import { RobotSoundInput } from "./sound.js";
 import "./style.css";
 
 type Host = Awaited<ReturnType<typeof connectToHost>>;
@@ -31,6 +32,8 @@ function mountApp(host?: Host): void {
       <section class="controls" aria-label="Run controls"><div class="control-copy"><h2>Run the loop</h2><p>${preview ? "Inspect the interface with synthetic faces and answers." : "Only bucketed state is sent to the relay. The API key stays server-side. Face frames stay in this browser."}</p></div>
         <form id="relay-form" ${preview ? "hidden" : ""}><label>Relay URL<input id="relay-url" type="url" value="http://127.0.0.1:8048" required autocomplete="url"></label><label>Session token<input id="relay-token" type="password" required minlength="32" autocomplete="off"></label><button type="submit">Connect Jev relay</button></form>
         <label class="tracking-toggle" ${preview ? "hidden" : ""}><input id="tracking-enable" type="checkbox"><span>Enable face tracking. Frames stay here; MediaPipe may send usage metrics to Google.</span></label>
+        <label class="tracking-toggle" ${preview ? "hidden" : ""}><input id="sound-enable" type="checkbox"><span>Use Reachy's incoming audio track for local sound-energy hints. No audio or raw samples are stored or sent to Jev; only a level bucket and coarse activity flag. This is not voice recognition, direction finding, or echo cancellation.</span></label>
+        <p id="sound-status" role="status" aria-live="polite" ${preview ? "hidden" : ""}>Robot audio analysis off.</p>
         <label class="tracking-toggle speech-consent"><input id="speech-consent" type="checkbox"><span>Use this device's microphone for browser speech recognition. The browser may send audio to its vendor; up to two final utterances (200 characters each) go to Jev through the configured relay. No speaker identity is inferred.</span></label>
         <button id="speech-toggle" type="button">Start transcription</button><p id="speech-status" role="status" aria-live="polite">Microphone off; no transcript is sent.</p>
         <label class="motion-toggle" ${preview ? "hidden" : ""}><input id="motion-enable" type="checkbox" disabled><span>Enable experimental robot motion</span></label>
@@ -47,6 +50,8 @@ function mountApp(host?: Host): void {
   const panel = q<JevPanelElement>("#jev-panel");
   const motionToggle = q<HTMLInputElement>("#motion-enable");
   const trackingToggle = q<HTMLInputElement>("#tracking-enable");
+  const soundToggle = q<HTMLInputElement>("#sound-enable");
+  const soundStatus = q<HTMLElement>("#sound-status");
   const speechConsent = q<HTMLInputElement>("#speech-consent");
   const speechToggle = q<HTMLButtonElement>("#speech-toggle");
   const speechStatus = q<HTMLElement>("#speech-status");
@@ -109,6 +114,8 @@ function mountApp(host?: Host): void {
   let lastVideoTime = -1;
   let lastFrameAtMs = -Infinity;
   let detectorEpoch = 0;
+  let soundEpoch = 0;
+  let sound: RobotSoundInput | undefined;
   let fixturePerson = false;
   const detachVideo = host?.media.attachVideo(video);
   q<HTMLElement>("#connection").textContent = preview ? "FIXTURE PREVIEW" : "ROBOT CONNECTED";
@@ -131,6 +138,33 @@ function mountApp(host?: Host): void {
       }
     });
     motionToggle.addEventListener("change", () => motion?.setEnabled(motionToggle.checked));
+    soundToggle.addEventListener("change", () => {
+      const epoch = ++soundEpoch;
+      sound?.stop();
+      sound = undefined;
+      if (!soundToggle.checked) {
+        soundStatus.textContent = "Robot audio analysis off; no sound state is sent.";
+        return;
+      }
+      const stream = host.media.robotStream;
+      if (!stream) {
+        soundToggle.checked = false;
+        soundStatus.textContent = "Robot audio stream unavailable. Try again after reconnecting.";
+        return;
+      }
+      const candidate = new RobotSoundInput(stream);
+      soundStatus.textContent = "Starting local robot audio analysis…";
+      void candidate.start().then(() => {
+        if (!active || epoch !== soundEpoch || !soundToggle.checked) { candidate.stop(); return; }
+        sound = candidate;
+        soundStatus.textContent = "Local sound-energy hints active; no raw audio leaves this tab.";
+      }).catch(() => {
+        candidate.stop();
+        if (epoch !== soundEpoch) return;
+        soundToggle.checked = false;
+        soundStatus.textContent = "Robot audio analysis unavailable or blocked by the browser.";
+      });
+    });
     trackingToggle.addEventListener("change", () => {
       const epoch = ++detectorEpoch;
       if (!trackingToggle.checked) {
@@ -181,6 +215,10 @@ function mountApp(host?: Host): void {
         if (fixturePerson) perception.acceptFaces([{ x: 0.6, y: 0.2, width: 0.25, height: 0.3 }], now);
       }
       const observation = perception.snapshot(now);
+      if (!preview) {
+        const reading = sound?.snapshot();
+        if (reading) observation.sound = reading;
+      }
       if (preview && fixturePerson) observation.transcriptRecent = [{ who: "p1", text: "Reachy, are you listening?" }];
       if (speechSharing) observation.transcriptRecent = transcripts.snapshot(now);
       const result = await engine.tick(observation, now);
@@ -204,11 +242,14 @@ function mountApp(host?: Host): void {
   const dispose = () => {
     active = false;
     detectorEpoch++;
+    soundEpoch++;
     clearInterval(tickTimer);
     clearInterval(detectTimer);
     motion?.setEnabled(false);
     detector?.close();
     speech.stop();
+    sound?.stop();
+    sound = undefined;
     transcripts.clear();
     speechSharing = false;
     detachVideo?.();

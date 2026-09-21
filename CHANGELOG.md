@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add opt-in local robot-stream sound-energy observation; only bucketed level and a coarse activity flag can reach the relay. No raw audio, DoA, speaker identity, or live robot claim.
 - Add explicit-consent browser transcription with short-lived, bounded final utterances and unknown speaker attribution. Cover the UI with a fake recognizer; no robot-microphone claim.
 
 ## 0.0.1 (development preview)

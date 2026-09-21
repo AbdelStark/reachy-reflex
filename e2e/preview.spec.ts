@@ -82,3 +82,28 @@ test("microphone transcript path is opt-in, final-only, and cleared on stop", as
   await expect(addressed).toHaveText("20%");
   expect(jevRequests).toEqual([]);
 });
+
+test("local robot-stream analyser reads synthetic audio without speaker output", async ({ page }) => {
+  await page.goto("/?preview=1");
+  const result = await page.evaluate(async () => {
+    const { RobotSoundInput } = await import("/src/sound.ts");
+    const generator = new AudioContext();
+    const oscillator = generator.createOscillator();
+    const destination = generator.createMediaStreamDestination();
+    oscillator.connect(destination);
+    oscillator.start();
+    await generator.resume();
+    const input = new RobotSoundInput(destination.stream);
+    try {
+      await input.start();
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      return input.snapshot();
+    } finally {
+      input.stop();
+      oscillator.stop();
+      await generator.close();
+    }
+  });
+  expect(result?.levelDbfs).toBeGreaterThan(-60);
+  expect(result?.voiceDetected).toBe(true);
+});

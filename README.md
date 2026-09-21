@@ -20,7 +20,7 @@ This is a development preview, not a hardware-tested release. The browser app no
 
 ## Run and verify
 
-Node.js 20.19+ and a sibling checkout of `reachy-jev` are currently required (`file:../reachy-jev`). The shared package must become independently installable before public release.
+Node.js 20.19+ is required. `reachy-jev` is installed from a pinned commit of its [public source repository](https://github.com/AbdelStark/reachy-jev); no sibling checkout or registry release is required. npm runs that package's `prepare` build during installation. Review the pinned source when updating the dependency.
 
 ```sh
 npm ci
@@ -41,4 +41,4 @@ The browser host follows Pollen Robotics' pinned [Reachy Mini JS app guide](http
 
 Faces have session-only IDs `p1`–`p9`, expire after 60 seconds, and are tracked by box overlap, not recognized. The default 60° camera field of view is an uncalibrated estimate; resulting bearing and distance are approximate. Movement remains off until a connected user enables both face tracking and experimental robot motion, and the app suppresses commands on stale judgments or missing video. SDK and firmware limits and physical stop controls remain independent requirements. See [SECURITY.md](SECURITY.md).
 
-The Hugging Face Space frontmatter is build metadata, not evidence of a deployed Space. A hosted static Space needs a separate HTTPS relay with authentication, rate limits, and a strict origin allowlist; a viewer's browser cannot reach your loopback relay.
+The Hugging Face Space frontmatter is build metadata, not evidence of a deployed Space. A hosted static Space needs a separate HTTPS relay with authentication, rate limits, and a strict origin allowlist; a viewer's browser cannot reach your loopback relay. See [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md), and [CITATION.cff](CITATION.cff).

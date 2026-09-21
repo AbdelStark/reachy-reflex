@@ -26,11 +26,19 @@ function parse(answers: Record<string, JevAnswer>, ids: readonly string[]): Refl
     attention_target: { choice: target.choice as PersonId | "none", confidence: p(target.confidence) },
     addressed: { noul: p(required(answers, "addressed", "noul").noul) },
     addressed_by_gaze: { noul: p(required(answers, "addressed_by_gaze", "noul").noul) },
+    wants_reply: { noul: p(required(answers, "wants_reply", "noul").noul) },
     pause_invites_ack: { noul: p(required(answers, "pause_invites_ack", "noul").noul) },
     being_ignored: { noul: p(required(answers, "being_ignored", "noul").noul) },
+    someone_leaving: { noul: p(required(answers, "someone_leaving", "noul").noul) },
+    someone_arriving: { noul: p(required(answers, "someone_arriving", "noul").noul) },
     turn_action: { choice: turn.choice as ReflexAnswers["turn_action"]["choice"], confidence: p(turn.confidence), ...(turn.probabilities ? { probabilities: turn.probabilities as Record<"keep_talking" | "yield" | "interrupt", number> } : {}) },
     engagement: { score: engagement.score },
     speaker_mood: { choice: mood.choice as ReflexAnswers["speaker_mood"]["choice"], confidence: p(mood.confidence) },
+    group_talking_to_each_other: { noul: p(required(answers, "group_talking_to_each_other", "noul").noul) },
+    robot_named: { noul: p(required(answers, "robot_named", "noul").noul) },
+    question_asked: { noul: p(required(answers, "question_asked", "noul").noul) },
+    laughter_moment: { noul: p(required(answers, "laughter_moment", "noul").noul) },
+    silence_awkward: { noul: p(required(answers, "silence_awkward", "noul").noul) },
   };
 }
 

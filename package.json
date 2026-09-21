@@ -5,9 +5,31 @@
   "type": "module",
   "private": true,
   "license": "MIT",
-  "engines": { "node": ">=20" },
-  "scripts": { "build": "tsc -p tsconfig.json", "check": "tsc -p tsconfig.json --noEmit", "test": "npm run build && node --test test/*.test.mjs" },
-  "dependencies": { "reachy-jev": "file:../reachy-jev", "@typesafe-ai/sdk": "0.6.0" },
-  "devDependencies": { "typescript": "^5.9.0" },
-  "repository": { "type": "git", "url": "https://github.com/AbdelStark/reachy-reflex.git" }
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "build": "vite build",
+    "build:core": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "dev": "vite --host 127.0.0.1",
+    "relay": "node server/main.mjs",
+    "test": "npm run build:core && node --test test/*.test.mjs",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "1.0.1",
+    "@pollen-robotics/reachy-mini-sdk": "1.8.0",
+    "@typesafe-ai/sdk": "0.6.0",
+    "reachy-jev": "file:../reachy-jev"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "typescript": "^5.9.0",
+    "vite": "7.3.6"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AbdelStark/reachy-reflex.git"
+  }
 }

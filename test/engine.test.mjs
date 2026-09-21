@@ -8,8 +8,10 @@ function answers() {
     attention_target: { type: "choice", choice: "p1", confidence: 0.9 },
     addressed: { type: "noul", noul: 0.2 }, addressed_by_gaze: { type: "noul", noul: 0.2 },
     pause_invites_ack: { type: "noul", noul: 0.1 }, being_ignored: { type: "noul", noul: 0.1 },
+    wants_reply: { type: "noul", noul: 0.1 }, someone_leaving: { type: "noul", noul: 0.1 }, someone_arriving: { type: "noul", noul: 0.1 },
     turn_action: { type: "choice", choice: "keep_talking", confidence: 0.9 },
     engagement: { type: "score", score: 2.5 }, speaker_mood: { type: "choice", choice: "neutral", confidence: 0.8 },
+    group_talking_to_each_other: { type: "noul", noul: 0.1 }, robot_named: { type: "noul", noul: 0.1 }, question_asked: { type: "noul", noul: 0.1 }, laughter_moment: { type: "noul", noul: 0.1 }, silence_awkward: { type: "noul", noul: 0.1 },
   };
 }
 const observation = { people: [{ id: "p1", bearingDeg: -20, faceHeightFraction: 0.25 }] };
@@ -28,7 +30,7 @@ test("one engine tick batches bank questions, then cached tick skips network", a
   assert.equal(first.output.gaze, "none");
   assert.equal(second.output.gaze, "p1");
   assert.equal(second.skipped, true);
-  assert.equal(first.panel.gauges.length, 8);
+  assert.equal(first.panel.gauges.length, 16);
   assert.equal(first.panel.gauges.find((gauge) => gauge.key === "engagement").p, 0.625);
   assert.equal(second.panel.skipped, true);
   assert.equal(second.panel.model, "jev-test");

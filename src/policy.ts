@@ -8,11 +8,19 @@ export interface ReflexAnswers {
   attention_target: Choice<PersonId | "none">;
   addressed: Noul;
   addressed_by_gaze: Noul;
+  wants_reply: Noul;
   pause_invites_ack: Noul;
   being_ignored: Noul;
+  someone_leaving: Noul;
+  someone_arriving: Noul;
   turn_action: Choice<"keep_talking" | "yield" | "interrupt">;
   engagement: Score;
   speaker_mood: Choice<"neutral" | "curious" | "playful" | "tense" | "frustrated">;
+  group_talking_to_each_other: Noul;
+  robot_named: Noul;
+  question_asked: Noul;
+  laughter_moment: Noul;
+  silence_awkward: Noul;
 }
 export interface ReflexInput {
   nowMs: number;

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Reachy Reflex</title>
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <script>
+      (() => {
+        const clientId = "__OAUTH_CLIENT_ID__";
+        if (!clientId.startsWith("__")) {
+          window.huggingface = { variables: {
+            OAUTH_CLIENT_ID: clientId,
+            OAUTH_SCOPES: "__OAUTH_SCOPES__",
+            SPACE_HOST: "__SPACE_HOST__",
+            SPACE_ID: "__SPACE_ID__",
+          } };
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/dispatch.ts"></script>
+  </body>
+</html>

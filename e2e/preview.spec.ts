@@ -10,6 +10,7 @@ test("fixture preview renders all 16 signals and reacts to synthetic room change
   page.on("request", (request) => { if (request.url().includes("/v1/systemone")) requests.push(request.url()); });
   await page.goto("/?preview=1");
   await expect(page.locator("#connection")).toHaveText("FIXTURE PREVIEW");
+  await expect(page.locator("#usage-note")).toHaveText("Fixture preview · no model cost.");
   await expect(page.locator("jev-panel").locator("jev-gauge")).toHaveCount(16);
   await expect(page.locator("jev-panel").locator(".status")).toHaveText("fixture");
   await expect(page.locator("#person-count")).toHaveText("0");
@@ -240,7 +241,7 @@ test("connected app judges consented final text without a camera and never comma
       group_talking_to_each_other: noul(0.1), robot_named: noul(0.9), question_asked: noul(0.8),
       laughter_moment: noul(0.1), silence_awkward: noul(0.1),
     };
-    await route.fulfill({ status: 200, headers, body: JSON.stringify({ model: "fixture", answers }) });
+    await route.fulfill({ status: 200, headers, body: JSON.stringify({ model: "fixture", answers, usage: { input_tokens: 120, output_tokens: 7 } }) });
   });
   await page.addInitScript(() => {
     class FakeRecognition {
@@ -280,6 +281,8 @@ test("connected app judges consented final text without a camera and never comma
   await page.evaluate(() => (window as unknown as { fakeRecognition: { emit(text: string): void } }).fakeRecognition.emit("Reachy, are you listening?"));
   await expect(page.locator("#decision")).toHaveText("Audio only · motion off");
   await expect(page.locator("jev-panel").locator("jev-gauge")).toHaveCount(16);
+  await expect(page.locator("#usage-note")).toContainText("120 input / 7 output tokens reported");
+  await expect(page.locator("#usage-note")).toContainText("Cost unavailable (model rate not verified)");
   expect(states.length).toBeGreaterThan(0);
   expect(states[0].people).toEqual([]);
   expect(states[0].transcript_recent).toEqual([{ who: "unknown", text: "Reachy, are you listening?", ended: "just now" }]);

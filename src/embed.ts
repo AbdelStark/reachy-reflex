@@ -12,6 +12,7 @@ import { BrowserSpeechInput, RecentTranscripts, browserRecognition } from "./spe
 import { RobotSoundInput } from "./sound.js";
 import { LocalRobotAsrPort, RobotSpeechInput } from "./robot_speech.js";
 import { SessionTrace, type MotionOutcome } from "./trace.js";
+import { UsageMeter, formatUsage } from "./usage.js";
 import "./style.css";
 
 type Host = Awaited<ReturnType<typeof connectToHost>>;
@@ -30,7 +31,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
           <div class="stage-foot"><div><span class="metric-label">Visible people</span><strong id="person-count">0</strong></div><div><span class="metric-label">Tick</span><strong id="tick-count">0</strong></div><div><span class="metric-label">Decision</span><strong id="decision">Idle</strong></div></div>
           <div id="preview-controls" class="preview-controls" ${preview ? "" : "hidden"}><p>Fixture preview · no Jev call, camera, or robot motion.</p><button id="preview-person" type="button">Simulate a person</button><button id="preview-empty" type="button">Empty room</button></div>
         </section>
-        <section class="brain" aria-label="Decision signals"><div class="brain-head"><p class="eyebrow">INSIDE THE LOOP</p><h2>Live judgment stream</h2><p id="stream-note">${preview ? "Deterministic fixture answers" : "Waiting for local Jev relay"}</p></div><jev-panel id="jev-panel"></jev-panel><p class="fine-print">Gauges show typed judgments; code gates every motion. This display is not a safety controller.</p></section>
+        <section class="brain" aria-label="Decision signals"><div class="brain-head"><p class="eyebrow">INSIDE THE LOOP</p><h2>Live judgment stream</h2><p id="stream-note">${preview ? "Deterministic fixture answers" : "Waiting for local Jev relay"}</p></div><jev-panel id="jev-panel"></jev-panel><p id="usage-note" class="fine-print" role="status">${preview ? "Fixture preview · no model cost." : formatUsage({ reportedCalls: 0, inputTokens: 0, outputTokens: 0, unresolvedCalls: 0, pendingCalls: 0 })}</p><p class="fine-print">Gauges show typed judgments; code gates every motion. This display is not a safety controller.</p></section>
       </div>
       <section class="controls" aria-label="Run controls"><div class="control-copy"><h2>Run the loop</h2><p>${preview ? "Inspect the interface with synthetic faces and answers." : "Only bucketed state is sent to the relay. The API key stays server-side. Face frames stay in this browser."}</p></div>
         <form id="relay-form" ${preview ? "hidden" : ""}><label>Relay URL<input id="relay-url" type="url" value="http://127.0.0.1:8048" required autocomplete="url"></label><label>Session token<input id="relay-token" type="password" required minlength="32" autocomplete="off"></label><button type="submit">Connect Jev relay</button></form>
@@ -57,6 +58,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
   };
   const video = q<HTMLVideoElement>("#robot-video");
   const panel = q<JevPanelElement>("#jev-panel");
+  const usageNote = q<HTMLElement>("#usage-note");
   const motionToggle = q<HTMLInputElement>("#motion-enable");
   const trackingToggle = q<HTMLInputElement>("#tracking-enable");
   const soundToggle = q<HTMLInputElement>("#sound-enable");
@@ -164,6 +166,9 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
   let relayTransport: RelayTransport | undefined;
   let ticks = 0;
   let active = true;
+  const usageMeter = new UsageMeter((snapshot) => {
+    if (active && !preview) usageNote.textContent = formatUsage(snapshot);
+  });
   let busy = false;
   let lastVideoTime = -1;
   let lastFrameAtMs = -Infinity;
@@ -255,7 +260,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
       event.preventDefault();
       try {
         const transport = new RelayTransport(q<HTMLInputElement>("#relay-url").value, q<HTMLInputElement>("#relay-token").value);
-        engine = new ReflexEngine(new JevClient({ ask: transport.ask.bind(transport) }));
+        engine = new ReflexEngine(new JevClient({ ask: usageMeter.wrap(transport.ask.bind(transport)) }));
         relayTransport = transport;
         traceEpoch++;
         lastMotionSource = undefined;

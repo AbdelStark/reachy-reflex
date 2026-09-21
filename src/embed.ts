@@ -43,6 +43,8 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
         <label class="tracking-toggle speech-consent"><input id="speech-consent" type="checkbox"><span>Use this device's microphone for browser speech recognition. The browser may send audio to its vendor; up to two final utterances (200 characters each) go to Jev through the configured relay. No speaker identity is inferred.</span></label>
         <button id="speech-toggle" type="button">Start transcription</button><p id="speech-status" role="status" aria-live="polite">Microphone off; no transcript is sent.</p>
         <label class="motion-toggle" ${preview ? "hidden" : ""}><input id="motion-enable" type="checkbox" disabled><span>Enable experimental robot motion</span></label>
+        <label class="tracking-toggle" ${preview ? "hidden" : ""}><input id="events-enable" type="checkbox" disabled><span>Publish fresh, text-free control hints to the authenticated local event bridge. A separate local subscriber may receive person labels and probabilities; no speech or robot action is sent by this switch.</span></label>
+        <p id="events-status" role="status" aria-live="polite" ${preview ? "hidden" : ""}>Local control events off.</p>
         <div class="trace-controls"><label class="tracking-toggle"><input id="trace-enable" type="checkbox"><span>Record a local, text-free judgment trace for this tab. Ask nearby people first; the export includes approximate face bearings and model answers, but no frames, audio, or transcript text.</span></label><div><button id="trace-download" type="button" disabled>Download trace JSONL</button><button id="trace-clear" type="button" disabled>Discard trace</button></div><p id="trace-status" role="status" aria-live="polite">Trace off. Nothing saved.</p></div>
         <p id="status" role="status" aria-live="polite">${preview ? "Preview running with fixture-only answers." : "Connect a relay before judging the room. Motion stays off until enabled."}</p>
       </section>
@@ -65,6 +67,8 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
   const speechConsent = q<HTMLInputElement>("#speech-consent");
   const speechToggle = q<HTMLButtonElement>("#speech-toggle");
   const speechStatus = q<HTMLElement>("#speech-status");
+  const eventsToggle = q<HTMLInputElement>("#events-enable");
+  const eventsStatus = q<HTMLElement>("#events-status");
   const traceToggle = q<HTMLInputElement>("#trace-enable");
   const traceDownload = q<HTMLButtonElement>("#trace-download");
   const traceClear = q<HTMLButtonElement>("#trace-clear");
@@ -157,6 +161,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
   const motion = host ? new RobotMotionController(host.reachy) : undefined;
   let detector: FaceDetectorPort | undefined;
   let engine: ReflexEngine | undefined = preview ? new ReflexEngine(new JevClient({ ask: fixtureAsk })) : undefined;
+  let relayTransport: RelayTransport | undefined;
   let ticks = 0;
   let active = true;
   let busy = false;
@@ -167,11 +172,19 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
   let motionEpoch = 0;
   let traceEpoch = 0;
   let lastMotionSource: Pick<MotionEvidence, "startedAtMs" | "observedFrameAtMs" | "observedPeople"> | undefined;
+  let lastEventSource: Pick<MotionEvidence, "startedAtMs" | "observedFrameAtMs" | "observedPeople"> | undefined;
   function invalidateJudgment() {
     traceEpoch++;
     engine?.invalidate();
     lastMotionSource = undefined;
+    lastEventSource = undefined;
   }
+  eventsToggle.addEventListener("change", () => {
+    invalidateJudgment();
+    eventsStatus.textContent = eventsToggle.checked
+      ? "Local event publishing armed; waiting for fresh camera judgments and a subscriber."
+      : "Local control events off.";
+  });
   let soundEpoch = 0;
   let sound: RobotSoundInput | undefined;
   let audioOnlyActive = false;
@@ -243,9 +256,16 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
       try {
         const transport = new RelayTransport(q<HTMLInputElement>("#relay-url").value, q<HTMLInputElement>("#relay-token").value);
         engine = new ReflexEngine(new JevClient({ ask: transport.ask.bind(transport) }));
+        relayTransport = transport;
         traceEpoch++;
         lastMotionSource = undefined;
+        lastEventSource = undefined;
         motionToggle.disabled = !detector || perceptionUnavailable;
+        eventsToggle.disabled = !transport.localEventBridge;
+        if (eventsToggle.disabled) {
+          eventsToggle.checked = false;
+          eventsStatus.textContent = "Local events require a numeric 127.0.0.1 relay; publishing off.";
+        }
         q<HTMLElement>("#status").textContent = "Relay configured. Face tracking or consented final text can trigger judgments; motion needs live video and explicit enablement.";
         q<HTMLInputElement>("#relay-token").value = "";
       } catch (error) {
@@ -396,6 +416,9 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
       const deliveredAtMs = performance.now();
       if (audioOnly && (!(speechSharing || robotSpeechSharing) || !transcripts.snapshot(performance.now()).length)) return;
       if (!result.skipped) {
+        lastEventSource = !result.stale && !audioOnly && trackingVersion === detectorEpoch
+          ? { startedAtMs: now, observedFrameAtMs, observedPeople: observation.people ?? [] }
+          : undefined;
         lastMotionSource = !result.stale && !audioOnly && motionToggle.checked && trackingVersion === detectorEpoch && motionVersion === motionEpoch
           ? { startedAtMs: now, observedFrameAtMs, observedPeople: observation.people ?? [] }
           : undefined;
@@ -407,6 +430,28 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
       q<HTMLElement>("#decision").textContent = result.stale ? "Stale · idle" : audioOnly ? "Audio only · motion off" : result.output.gaze === "none" ? "Scanning" : `Looking at ${result.output.gaze}`;
       q<HTMLElement>("#stream-note").textContent = preview ? "Deterministic fixture answers" : result.stale ? "Jev unavailable · no new motion" : `${result.model ?? "Model unknown"} · ${Math.round(result.latencyMs ?? 0)} ms`;
       if (result.error) q<HTMLElement>("#status").textContent = `Judgment unavailable (${result.error}); motion paused.`;
+      const eventReady = Boolean(host && relayTransport && eventsToggle.checked && !audioOnly && !result.stale && detector
+        && trackingVersion === detectorEpoch && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+        && lastEventSource && motionEvidenceCurrent({ ...lastEventSource, deliveredAtMs,
+          latestFrameAtMs: lastFrameAtMs, latestPeople: perception.snapshot(deliveredAtMs).people ?? [] }));
+      if (eventReady && result.output.events.length) {
+        const publisher = relayTransport!;
+        for (const event of result.output.events) {
+          void publisher.publishEvent(event).then((subscribers) => {
+            if (active && eventsToggle.checked && relayTransport === publisher) {
+              eventsStatus.textContent = subscribers
+                ? `Local event accepted for ${subscribers} connected subscriber${subscribers === 1 ? "" : "s"}; consumer action is unverified.`
+                : "Local event accepted, but no subscriber was connected.";
+            }
+          }).catch(() => {
+            if (active && eventsToggle.checked && relayTransport === publisher) {
+              eventsToggle.checked = false;
+              invalidateJudgment();
+              eventsStatus.textContent = "Local event bridge unavailable; publishing stopped. No consumer action is assumed.";
+            }
+          });
+        }
+      }
       const motionReady = Boolean(host && motion && !audioOnly && !result.stale && detector && motionToggle.checked
         && trackingVersion === detectorEpoch && motionVersion === motionEpoch
         && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
@@ -449,6 +494,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
     clearInterval(tickTimer);
     clearInterval(detectTimer);
     motion?.setEnabled(false);
+    eventsToggle.checked = false;
     detector?.close();
     speech.stop();
     stopRobotSpeech("Robot transcription off.");

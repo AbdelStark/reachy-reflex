@@ -1,9 +1,13 @@
 import { createServer } from "node:http";
 import { timingSafeEqual } from "node:crypto";
+import WebSocket, { WebSocketServer } from "ws";
 
 const MAX_BODY = 32 * 1024;
 const MAX_INFLIGHT = 2;
 const MAX_PER_MINUTE = 300;
+const MAX_EVENT_BYTES = 512;
+const MAX_EVENT_SUBSCRIBERS = 8;
+const MAX_EVENTS_PER_MINUTE = 600;
 
 function send(response, status, body, origin) {
   response.writeHead(status, {
@@ -29,17 +33,85 @@ function validBody(body) {
     && Object.values(body.questions).every((question) => question && typeof question === "object" && ["noul", "choice", "score"].includes(question.type));
 }
 
+function validEvent(event) {
+  if (!event || typeof event !== "object" || Array.isArray(event)) return false;
+  const keys = Object.keys(event).sort().join();
+  const person = typeof event.person === "string" && /^p[1-9]$/.test(event.person);
+  const probability = typeof event.p === "number" && Number.isFinite(event.p) && event.p >= 0 && event.p <= 1;
+  if (event.type === "attention") return keys === "person,type" && person;
+  if (event.type === "user_addressed") return keys === "p,person,type" && person && probability;
+  if (event.type === "yield" || event.type === "interrupt") return keys === "p,type" && probability;
+  return false;
+}
+
+function rejectUpgrade(socket, status) {
+  socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+}
+
 /** Local-only, authenticated and bounded Jev relay. Never logs state or secrets. */
-export function createRelayServer({ token, allowedOrigin, ask, now = Date.now }) {
+export function createRelayServer({ token, allowedOrigin, ask, eventSubscriberToken, now = Date.now }) {
   if (typeof token !== "string" || token.length < 32) throw new TypeError("relay token must be at least 32 characters");
   if (typeof allowedOrigin !== "string" || !/^https?:\/\/[^/]+$/.test(allowedOrigin)) throw new TypeError("invalid allowed origin");
   if (typeof ask !== "function") throw new TypeError("ask function required");
+  if (eventSubscriberToken !== undefined && (typeof eventSubscriberToken !== "string" || eventSubscriberToken.length < 32 || eventSubscriberToken === token)) throw new TypeError("event subscriber token must be distinct and at least 32 characters");
+  const events = eventSubscriberToken ? new WebSocketServer({ noServer: true, perMessageDeflate: false, maxPayload: MAX_EVENT_BYTES }) : undefined;
+  events?.on("connection", (socket) => {
+    socket.on("message", () => socket.close(1008, "read only"));
+    socket.on("error", () => {});
+  });
   let inflight = 0;
   let windowStart = now();
   let calls = 0;
-  return createServer(async (request, response) => {
+  let eventWindowStart = now();
+  let eventCalls = 0;
+  let eventSequence = 0;
+  const server = createServer(async (request, response) => {
     const origin = request.headers.origin === allowedOrigin ? allowedOrigin : undefined;
     if (request.headers.origin && !origin) return send(response, 403, { error: "origin_forbidden" });
+    if (request.url === "/v1/events") {
+      if (!events) return send(response, 404, { error: "events_disabled" }, origin);
+      if (request.method === "OPTIONS") {
+        if (!origin) return send(response, 403, { error: "origin_forbidden" });
+        response.writeHead(204, {
+          "Access-Control-Allow-Origin": origin,
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Authorization, Content-Type",
+          Vary: "Origin",
+        });
+        return response.end();
+      }
+      if (request.method !== "POST") return send(response, 405, { error: "method_not_allowed" }, origin);
+      if (!origin) return send(response, 403, { error: "origin_required" });
+      if (!authorized(request.headers.authorization, token)) return send(response, 401, { error: "unauthorized" }, origin);
+      if (!request.headers["content-type"]?.startsWith("application/json")) return send(response, 415, { error: "json_required" }, origin);
+      if (now() - eventWindowStart >= 60_000) { eventWindowStart = now(); eventCalls = 0; }
+      if (eventCalls >= MAX_EVENTS_PER_MINUTE) return send(response, 429, { error: "event_rate_limited" }, origin);
+      eventCalls++;
+      try {
+        let size = 0;
+        const chunks = [];
+        for await (const chunk of request) {
+          size += chunk.length;
+          if (size > MAX_EVENT_BYTES) return send(response, 413, { error: "too_large" }, origin);
+          chunks.push(chunk);
+        }
+        let event;
+        try { event = JSON.parse(Buffer.concat(chunks).toString("utf8")); }
+        catch { return send(response, 400, { error: "invalid_json" }, origin); }
+        if (!validEvent(event)) return send(response, 400, { error: "invalid_event" }, origin);
+        const message = JSON.stringify({ schema: "reflex.event@1", seq: ++eventSequence, t_ms: now(), event });
+        let subscribers = 0;
+        for (const socket of events.clients) {
+          if (socket.readyState !== WebSocket.OPEN) continue;
+          if (socket.bufferedAmount > 16_384) { socket.terminate(); continue; }
+          socket.send(message);
+          subscribers++;
+        }
+        return send(response, 202, { accepted: true, subscribers }, origin);
+      } catch {
+        return send(response, 503, { error: "event_unavailable" }, origin);
+      }
+    }
     if (request.url !== "/v1/systemone") return send(response, 404, { error: "not_found" }, origin);
     if (request.method === "OPTIONS") {
       if (!origin) return send(response, 403, { error: "origin_forbidden" });
@@ -78,4 +150,13 @@ export function createRelayServer({ token, allowedOrigin, ask, now = Date.now })
       inflight--;
     }
   });
+  server.on("upgrade", (request, socket, head) => {
+    if (request.url !== "/v1/events" || !events) return rejectUpgrade(socket, "404 Not Found");
+    if (request.headers.origin && request.headers.origin !== allowedOrigin) return rejectUpgrade(socket, "403 Forbidden");
+    if (!authorized(request.headers.authorization, eventSubscriberToken)) return rejectUpgrade(socket, "401 Unauthorized");
+    if (events.clients.size >= MAX_EVENT_SUBSCRIBERS) return rejectUpgrade(socket, "429 Too Many Requests");
+    try { events.handleUpgrade(request, socket, head, (ws) => events.emit("connection", ws, request)); }
+    catch { socket.destroy(); }
+  });
+  return server;
 }

@@ -292,6 +292,86 @@ test("connected app judges consented final text without a camera and never comma
   await expect(page.locator("jev-panel").locator("jev-gauge")).toHaveCount(0);
 });
 
+test("local control events require explicit opt-in and fresh camera evidence", async ({ page }) => {
+  const published: Array<Record<string, unknown>> = [];
+  let slowNext = false;
+  let slowAnswered = false;
+  const headers = {
+    "Access-Control-Allow-Origin": "http://127.0.0.1:5173",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Content-Type": "application/json",
+  };
+  await page.route("http://127.0.0.1:8048/v1/events", async (route) => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers });
+    published.push(route.request().postDataJSON());
+    await route.fulfill({ status: 202, headers, body: JSON.stringify({ accepted: true, subscribers: 1 }) });
+  });
+  await page.route("http://127.0.0.1:8048/v1/systemone", async (route) => {
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers });
+    const people = route.request().postDataJSON().state.people as Array<{ id: string }>;
+    if (slowNext && people.length) {
+      slowNext = false;
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      slowAnswered = true;
+    }
+    const noul = (value: number) => ({ type: "noul", noul: value });
+    const answers = {
+      attention_target: { type: "choice", choice: people[0]?.id ?? "none", confidence: 0.9 },
+      addressed: noul(0.1), addressed_by_gaze: noul(0.1), wants_reply: noul(0.1),
+      pause_invites_ack: noul(0.1), being_ignored: noul(0.1), someone_leaving: noul(0.1),
+      someone_arriving: noul(0.1), turn_action: { type: "choice", choice: "keep_talking", confidence: 0.9 },
+      engagement: { type: "score", score: 2 }, speaker_mood: { type: "choice", choice: "neutral", confidence: 0.9 },
+      group_talking_to_each_other: noul(0.1), robot_named: noul(0.1), question_asked: noul(0.1),
+      laughter_moment: noul(0.1), silence_awkward: noul(0.1),
+    };
+    await route.fulfill({ status: 200, headers, body: JSON.stringify({ model: "fixture", answers }) });
+  });
+  await page.goto("/?preview=1");
+  await page.evaluate(async () => {
+    window.dispatchEvent(new Event("pagehide"));
+    const canvas = document.createElement("canvas");
+    canvas.width = 320; canvas.height = 240;
+    const context = canvas.getContext("2d")!;
+    let shade = 0;
+    const draw = window.setInterval(() => { context.fillStyle = `rgb(${shade++ % 255},0,0)`; context.fillRect(0, 0, 320, 240); }, 50);
+    const stream = canvas.captureStream(30);
+    const commands: unknown[] = [];
+    (window as unknown as { eventRobotCommands: unknown[] }).eventRobotCommands = commands;
+    const host = {
+      reachy: { state: "streaming", setTarget(target: unknown) { commands.push(target); return true; }, gotoTarget(target: unknown) { commands.push(target); return true; } },
+      media: { attachVideo(video: HTMLVideoElement) { video.srcObject = stream; void video.play(); return () => { clearInterval(draw); stream.getTracks().forEach((track) => track.stop()); }; }, robotStream: undefined },
+      onLeave: () => {},
+    };
+    const { mountApp } = await import("/src/embed.ts");
+    mountApp(host as never, async () => ({ detect() { return [{ x: 0.3, y: 0.2, width: 0.2, height: 0.3 }]; }, close() {} }));
+  });
+  await page.locator("#relay-token").fill("t".repeat(32));
+  await page.getByRole("button", { name: "Connect Jev relay" }).click();
+  await page.locator("#tracking-enable").check();
+  await expect(page.locator("#person-count")).toHaveText("1");
+  await expect(page.locator("#decision")).toHaveText("Looking at p1");
+  expect(published).toEqual([]);
+  await page.locator("#tracking-enable").uncheck();
+  slowNext = true;
+  await page.locator("#events-enable").check();
+  await page.locator("#tracking-enable").check();
+  await expect.poll(() => slowAnswered).toBe(true);
+  await page.waitForTimeout(400); // Cached copies retain the old source age.
+  expect(published).toEqual([]);
+  await page.locator("#tracking-enable").uncheck();
+  await page.locator("#tracking-enable").check();
+  await expect.poll(() => published.length).toBeGreaterThan(0);
+  expect(published).toContainEqual({ type: "attention", person: "p1" });
+  await expect(page.locator("#events-status")).toContainText("1 connected subscriber");
+  expect(await page.evaluate(() => (window as unknown as { eventRobotCommands: unknown[] }).eventRobotCommands)).toEqual([]);
+  await page.locator("#events-enable").uncheck();
+  const count = published.length;
+  await page.waitForTimeout(500);
+  expect(published).toHaveLength(count);
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+});
+
 test("slow Jev answers and their cached copies cannot move a fake robot", async ({ page }) => {
   let blockReady = false;
   let blocked = false;

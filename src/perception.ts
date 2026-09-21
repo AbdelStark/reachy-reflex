@@ -20,12 +20,14 @@ export function overlap(a: FaceBox, b: FaceBox): number {
 export class FaceTracker {
   private tracks: Track[] = [];
   private revision = 0;
+  private lastUpdateMs = -Infinity;
   constructor(private readonly horizontalFovDeg = 60) {
     if (!Number.isFinite(horizontalFovDeg) || horizontalFovDeg <= 0 || horizontalFovDeg > 180) throw new RangeError("invalid camera field of view");
   }
   get identityRevision(): number { return this.revision; }
   update(boxes: readonly FaceBox[], nowMs: number): PersonObservation[] {
     if (!Number.isFinite(nowMs) || nowMs < 0) throw new RangeError("invalid timestamp");
+    if (nowMs < this.lastUpdateMs) throw new RangeError("out-of-order camera frame");
     if (boxes.some((box) => !validBox(box))) throw new RangeError("invalid normalized face box");
     if (boxes.length > 9) throw new RangeError("too many faces for nine-label room state");
     this.tracks = this.tracks.filter((track) => nowMs >= track.seenAtMs && nowMs - track.seenAtMs < 60_000);
@@ -57,16 +59,17 @@ export class FaceTracker {
         if (!id) continue;
         used.add(id);
       }
-      next.push({ id, box, seenAtMs: nowMs });
+      next.push({ id, box: { ...box }, seenAtMs: nowMs });
     }
     this.tracks = [...this.tracks.filter((track) => !used.has(track.id)), ...next];
+    this.lastUpdateMs = nowMs;
     return next.map(({ id, box }) => ({
       id,
       bearingDeg: ((box.x + box.width / 2) - 0.5) * this.horizontalFovDeg,
       faceHeightFraction: box.height,
     }));
   }
-  clear(): void { this.tracks = []; this.revision++; }
+  clear(): void { this.tracks = []; this.lastUpdateMs = -Infinity; this.revision++; }
 }
 
 export class PerceptionState {
@@ -89,7 +92,8 @@ export class PerceptionState {
   snapshot(nowMs: number): RoomObservation {
     if (!Number.isFinite(nowMs) || nowMs < 0) throw new RangeError("invalid timestamp");
     // Never send or act on positions after a lost video stream.
-    return { people: nowMs - this.lastFrameAtMs <= 1000 && nowMs >= this.lastFrameAtMs ? this.people : [] };
+    return { people: nowMs - this.lastFrameAtMs <= 1000 && nowMs >= this.lastFrameAtMs
+      ? this.people.map((person) => ({ ...person })) : [] };
   }
   clear(): void { this.people = []; this.lastFrameAtMs = -Infinity; this.tracker.clear(); }
 }

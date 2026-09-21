@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Detach tracked face boxes and returned room snapshots from caller-owned objects; reject out-of-order camera timestamps so an older frame cannot silently remap a session label. The app's existing perception-error path clears evidence and disarms motion; synthetic tests do not validate camera timing on a robot.
 - Pin the local model relay to the reviewed 16-question Reflex wire while validating person-dependent attention choices against bounded, bucketed room state; reject altered instructions and extra/private fields before the model port. Synthetic relay and browser checks do not measure Jev or robot behavior.
 - Break a partial gaze switch and no-target idle countdown on stale judgments or a two-second fresh-data gap; extend the self-authored policy replay to 43 ticks across four scenes. No robot timing or behavior claim follows.
 - Add a display-only full-screen brain panel with in-page fallback when browser or host policy denies it; browser tests cover entry, exit, and denial without model or robot calls.

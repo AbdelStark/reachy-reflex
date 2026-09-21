@@ -60,3 +60,32 @@ test("missing video frames expire position observations and reset clears all tra
   state.clear();
   assert.deepEqual(state.snapshot(200).people, []);
 });
+
+test("caller-owned boxes and returned snapshots cannot rewrite camera tracking evidence", () => {
+  const tracker = new FaceTracker();
+  const box = { ...a };
+  assert.equal(tracker.update([box], 100)[0].id, "p1");
+  box.x = 0.6;
+  assert.equal(tracker.update([a], 200)[0].id, "p1");
+
+  const state = new PerceptionState();
+  state.acceptFaces([a], 100);
+  const first = state.snapshot(100);
+  first.people[0].bearingDeg = 45;
+  first.people.push({ id: "p2", bearingDeg: 20 });
+  assert.deepEqual(state.snapshot(200).people, [{ id: "p1", bearingDeg: -18, faceHeightFraction: 0.3 }]);
+});
+
+test("out-of-order camera frames fail closed instead of reusing a stale label", () => {
+  const tracker = new FaceTracker();
+  tracker.update([a], 100);
+  assert.throws(() => tracker.update([b], 99), /out-of-order/);
+  assert.equal(tracker.update([a], 110)[0].id, "p1");
+
+  const state = new PerceptionState();
+  state.acceptFaces([a], 100);
+  assert.throws(() => state.acceptFaces([b], 99), /out-of-order/);
+  assert.deepEqual(state.snapshot(110), { people: [] });
+  assert.equal(state.acceptFaces([a], 120), false);
+  assert.equal(state.snapshot(120).people[0].id, "p1");
+});

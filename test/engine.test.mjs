@@ -28,6 +28,10 @@ test("one engine tick batches bank questions, then cached tick skips network", a
   assert.equal(first.output.gaze, "none");
   assert.equal(second.output.gaze, "p1");
   assert.equal(second.skipped, true);
+  assert.equal(first.panel.gauges.length, 8);
+  assert.equal(first.panel.gauges.find((gauge) => gauge.key === "engagement").p, 0.625);
+  assert.equal(second.panel.skipped, true);
+  assert.equal(second.panel.model, "jev-test");
   assert.equal(calls, 1);
   assert.equal(Object.keys(request.questions).length, 16);
   assert.deepEqual(request.questions.attention_target.criteria, { p1: null, none: null });
@@ -42,6 +46,17 @@ test("wrong answer kind never actuates from model data", async () => {
   assert.equal(result.stale, true);
   assert.equal(result.output.idle, true);
   assert.equal(result.output.events.length, 0);
+  assert.deepEqual(result.panel, { gauges: [], stale: true });
+});
+
+test("unknown person choice is rejected before policy and panel projection", async () => {
+  const wrong = answers();
+  wrong.attention_target = { type: "choice", choice: "p999999999999999999999999", confidence: 0.99 };
+  const engine = new ReflexEngine(new JevClient({ ask: async () => ({ answers: wrong }) }));
+  const result = await engine.tick(observation, 0);
+  assert.equal(result.stale, true);
+  assert.equal(result.output.gaze, "none");
+  assert.deepEqual(result.panel, { gauges: [], stale: true });
 });
 
 test("network failure leaves robot in idle rather than producing a new motion decision", async () => {
@@ -49,4 +64,5 @@ test("network failure leaves robot in idle rather than producing a new motion de
   const result = await engine.tick(observation, 0);
   assert.equal(result.stale, true);
   assert.equal(result.output.idle, true);
+  assert.deepEqual(result.panel, { gauges: [], stale: true });
 });

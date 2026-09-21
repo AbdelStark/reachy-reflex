@@ -2,6 +2,8 @@ import type { EntryType, Questions, TypeSafeClient } from "@typesafe-ai/sdk";
 import { buildRoomState, JevClient, toTypeSafeQuestions, type JevAnswer, type JevResult, type RoomObservation } from "reachy-jev";
 import { REFLEX_BANK } from "./bank.js";
 import { ReflexPolicy, type ReflexAnswers, type ReflexOutput, type PersonId } from "./policy.js";
+import { reflexPanelFrame, stalePanelFrame } from "./panel.js";
+import type { PanelFrame } from "reachy-jev/panel";
 
 function required(answers: Record<string, JevAnswer>, key: string, type: "noul" | "choice" | "score"): JevAnswer {
   const answer = answers[key];
@@ -12,12 +14,12 @@ function p(value: number | undefined): number {
   if (value === undefined || !Number.isFinite(value) || value < 0 || value > 1) throw new TypeError("invalid probability");
   return value;
 }
-function parse(answers: Record<string, JevAnswer>): ReflexAnswers {
+function parse(answers: Record<string, JevAnswer>, ids: readonly string[]): ReflexAnswers {
   const target = required(answers, "attention_target", "choice");
   const turn = required(answers, "turn_action", "choice");
   const mood = required(answers, "speaker_mood", "choice");
   const engagement = required(answers, "engagement", "score");
-  if (!target.choice || !turn.choice || !mood.choice || engagement.score === undefined || !Number.isFinite(engagement.score) || engagement.score < 0 || engagement.score > 4) throw new TypeError("incomplete choice or score");
+  if (!target.choice || (target.choice !== "none" && !ids.includes(target.choice)) || !turn.choice || !mood.choice || engagement.score === undefined || !Number.isFinite(engagement.score) || engagement.score < 0 || engagement.score > 4) throw new TypeError("incomplete or unknown choice or score");
   if (turn.probabilities && Object.values(turn.probabilities).some((value) => !Number.isFinite(value) || value < 0 || value > 1)) throw new TypeError("invalid choice distribution");
   if (!["keep_talking", "yield", "interrupt"].includes(turn.choice) || !["neutral", "curious", "playful", "tense", "frustrated"].includes(mood.choice)) throw new TypeError("unknown choice label");
   return {
@@ -44,7 +46,7 @@ export function typeSafeTransport(client: TypeSafeClient) {
   };
 }
 
-export interface EngineTick { output: ReflexOutput; model?: string; latencyMs?: number; skipped?: boolean; stale: boolean; error?: string }
+export interface EngineTick { output: ReflexOutput; panel: PanelFrame; model?: string; latencyMs?: number; skipped?: boolean; stale: boolean; error?: string }
 export class ReflexEngine {
   constructor(private readonly client: JevClient, private readonly policy = new ReflexPolicy()) {}
   async tick(observation: RoomObservation, nowMs: number): Promise<EngineTick> {
@@ -63,13 +65,13 @@ export class ReflexEngine {
     try {
       response = await this.client.ask(state, questions);
     } catch (error) {
-      return { output: this.policy.step({ ...input, stale: true }), stale: true, error: error instanceof Error ? error.name : "JevError" };
+      return { output: this.policy.step({ ...input, stale: true }), panel: stalePanelFrame(), stale: true, error: error instanceof Error ? error.name : "JevError" };
     }
     try {
-      const answers = parse(response.answers);
-      return { output: this.policy.step({ ...input, answers, stale: response.stale }), stale: response.stale, ...(response.model ? { model: response.model } : {}), latencyMs: response.latencyMs, skipped: response.skipped };
+      const answers = parse(response.answers, ids);
+      return { output: this.policy.step({ ...input, answers, stale: response.stale }), panel: reflexPanelFrame(answers, { stale: response.stale, skipped: response.skipped, latencyMs: response.latencyMs, ...(response.model ? { model: response.model } : {}) }), stale: response.stale, ...(response.model ? { model: response.model } : {}), latencyMs: response.latencyMs, skipped: response.skipped };
     } catch (error) {
-      return { output: this.policy.step({ ...input, stale: true }), stale: true, error: error instanceof Error ? error.name : "InvalidAnswer" };
+      return { output: this.policy.step({ ...input, stale: true }), panel: stalePanelFrame(response.model), stale: true, error: error instanceof Error ? error.name : "InvalidAnswer" };
     }
   }
 }

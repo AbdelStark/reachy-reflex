@@ -98,6 +98,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
     robotSpeech = undefined;
     robotSpeechSharing = false;
     if (wasRunning) transcripts.clear();
+    if (wasRunning) invalidateJudgment();
     robotSpeechToggle.textContent = "Start robot transcription";
     robotSpeechStatus.textContent = status;
   };
@@ -105,6 +106,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
     browserRecognition,
     (text) => {
       if (speechSharing && transcripts.accept(text, performance.now())) {
+        invalidateJudgment();
         speechStatus.textContent = "Final utterance captured. Recent text may be sent to Jev for 30 seconds.";
       }
     },
@@ -122,6 +124,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
       speech.stop();
       speechSharing = false;
       if (!robotSpeechSharing) transcripts.clear();
+      invalidateJudgment();
       speechToggle.textContent = "Start transcription";
       speechStatus.textContent = robotSpeechSharing ? "Device microphone off; robot transcription remains active." : "Microphone off; recent text cleared. An in-flight relay request cannot be recalled.";
     } else speechStatus.textContent = "Consent set for this tab. Press Start transcription to listen.";
@@ -131,6 +134,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
       speech.stop();
       speechSharing = false;
       transcripts.clear();
+      invalidateJudgment();
       speechToggle.textContent = "Start transcription";
       speechStatus.textContent = "Microphone off; recent text cleared. An in-flight relay request cannot be recalled.";
       return;
@@ -146,6 +150,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
       speechStatus.textContent = "Speech recognition could not start; check browser support and microphone permission.";
       return;
     }
+    invalidateJudgment();
     speechToggle.textContent = "Stop transcription";
     speechStatus.textContent = "Listening on this device. Only final text is kept briefly in this tab.";
   });
@@ -160,6 +165,10 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
   let detectorEpoch = 0;
   let motionEpoch = 0;
   let lastMotionSource: Pick<MotionEvidence, "startedAtMs" | "observedFrameAtMs" | "observedPeople"> | undefined;
+  function invalidateJudgment() {
+    engine?.invalidate();
+    lastMotionSource = undefined;
+  }
   let soundEpoch = 0;
   let sound: RobotSoundInput | undefined;
   let audioOnlyActive = false;
@@ -173,8 +182,8 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
   q<HTMLElement>("#video-fallback").textContent = preview ? "No camera in fixture preview" : "Waiting for robot video…";
 
   if (preview) {
-    q<HTMLButtonElement>("#preview-person").addEventListener("click", () => { fixturePerson = true; });
-    q<HTMLButtonElement>("#preview-empty").addEventListener("click", () => { fixturePerson = false; perception.clear(); });
+    q<HTMLButtonElement>("#preview-person").addEventListener("click", () => { fixturePerson = true; invalidateJudgment(); });
+    q<HTMLButtonElement>("#preview-empty").addEventListener("click", () => { fixturePerson = false; perception.clear(); invalidateJudgment(); });
   } else {
     robotSpeechToggle.addEventListener("click", () => {
       if (robotSpeechSharing) {
@@ -205,13 +214,17 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
       speechStatus.textContent = "Device microphone off; recent text cleared.";
       const epoch = ++robotSpeechEpoch;
       const candidate = new RobotSpeechInput(stream, asr, (text) => {
-        if (robotSpeechSharing && epoch === robotSpeechEpoch && transcripts.accept(text, performance.now())) robotSpeechStatus.textContent = "Final robot-stream utterance captured; recent text may be sent to Jev for 30 seconds.";
+        if (robotSpeechSharing && epoch === robotSpeechEpoch && transcripts.accept(text, performance.now())) {
+          invalidateJudgment();
+          robotSpeechStatus.textContent = "Final robot-stream utterance captured; recent text may be sent to Jev for 30 seconds.";
+        }
       }, (status) => {
         if (epoch !== robotSpeechEpoch) return;
         robotSpeechStatus.textContent = status === "segment" ? "Sending one bounded audio segment to local ASR…" : status === "busy" ? "Local ASR busy; extra audio segment dropped." : "Local robot ASR failed; check the local process and token.";
       });
       robotSpeech = candidate;
       robotSpeechSharing = true;
+      invalidateJudgment();
       robotSpeechToggle.textContent = "Stop robot transcription";
       robotSpeechStatus.textContent = "Starting robot audio capture…";
       void candidate.start().then(() => {
@@ -235,11 +248,12 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
         q<HTMLElement>("#status").textContent = error instanceof Error ? error.message : "Invalid relay settings";
       }
     });
-    motionToggle.addEventListener("change", () => { motionEpoch++; lastMotionSource = undefined; motion?.setEnabled(motionToggle.checked); });
+    motionToggle.addEventListener("change", () => { motionEpoch++; invalidateJudgment(); motion?.setEnabled(motionToggle.checked); });
     soundToggle.addEventListener("change", () => {
       const epoch = ++soundEpoch;
       sound?.stop();
       sound = undefined;
+      invalidateJudgment();
       if (!soundToggle.checked) {
         soundStatus.textContent = "Robot audio analysis off; no sound state is sent.";
         return;
@@ -255,6 +269,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
       void candidate.start().then(() => {
         if (!active || epoch !== soundEpoch || !soundToggle.checked) { candidate.stop(); return; }
         sound = candidate;
+        invalidateJudgment();
         soundStatus.textContent = "Local sound-energy hints active; no raw audio leaves this tab.";
       }).catch(() => {
         candidate.stop();
@@ -266,7 +281,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
     trackingToggle.addEventListener("change", () => {
       const epoch = ++detectorEpoch;
       motionEpoch++;
-      lastMotionSource = undefined;
+      invalidateJudgment();
       if (!trackingToggle.checked) {
         detector?.close();
         detector = undefined;
@@ -284,6 +299,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
       void createFaceDetector().then((ready) => {
         if (!active || epoch !== detectorEpoch || !trackingToggle.checked) return ready.close();
         detector = ready;
+        invalidateJudgment();
         motionToggle.disabled = !engine;
         q<HTMLElement>("#status").textContent = "Face tracking ready. Connect the relay to start judgments.";
       }).catch(() => {
@@ -305,7 +321,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
       lastFrameAtMs = now;
       q<HTMLElement>("#video-fallback").hidden = true;
     }
-    catch { q<HTMLElement>("#status").textContent = "Face detection failed; motion paused."; motionEpoch++; lastMotionSource = undefined; motionToggle.checked = false; motion?.setEnabled(false); }
+    catch { q<HTMLElement>("#status").textContent = "Face detection failed; motion paused."; motionEpoch++; invalidateJudgment(); motionToggle.checked = false; motion?.setEnabled(false); }
   }, 100);
 
   async function tick(): Promise<void> {
@@ -316,6 +332,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
     if (audioOnly && !recent.length) {
       if (audioOnlyActive) {
         audioOnlyActive = false;
+        invalidateJudgment();
         panel.update({ gauges: [], stale: true });
         q<HTMLElement>("#decision").textContent = "Idle";
         q<HTMLElement>("#stream-note").textContent = "No recent final text · motion off";
@@ -340,7 +357,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
       if (preview && fixturePerson) observation.transcriptRecent = [{ who: "p1", text: "Reachy, are you listening?" }];
       if (recent.length) observation.transcriptRecent = recent;
       const result = await currentEngine.tick(observation, now);
-      if (!active || currentEngine !== engine || (!preview && !audioOnly && trackingVersion !== detectorEpoch)) return;
+      if (!active || !result || currentEngine !== engine || document.visibilityState !== "visible" || (!preview && !audioOnly && trackingVersion !== detectorEpoch)) return;
       const deliveredAtMs = performance.now();
       if (audioOnly && (!(speechSharing || robotSpeechSharing) || !transcripts.snapshot(performance.now()).length)) return;
       if (!result.skipped) {
@@ -383,9 +400,13 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
     } finally { busy = false; }
   }
   const tickTimer = window.setInterval(() => { void tick(); }, 250);
+  const onVisibilityChange = () => { invalidateJudgment(); };
+  document.addEventListener("visibilitychange", onVisibilityChange);
   void tick();
   const dispose = () => {
     active = false;
+    invalidateJudgment();
+    document.removeEventListener("visibilitychange", onVisibilityChange);
     detectorEpoch++;
     motionEpoch++;
     lastMotionSource = undefined;

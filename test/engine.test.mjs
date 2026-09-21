@@ -84,3 +84,42 @@ test("network failure leaves robot in idle rather than producing a new motion de
   assert.equal(result.output.idle, true);
   assert.deepEqual(result.panel, { gauges: [], stale: true });
 });
+
+test("invalidating an in-flight reply keeps old evidence out of the next policy epoch", async () => {
+  let release;
+  let calls = 0;
+  const client = new JevClient({ ask: async () => {
+    calls++;
+    if (calls === 1) await new Promise((resolve) => { release = resolve; });
+    return { model: "synthetic", answers: answers() };
+  } });
+  const engine = new ReflexEngine(client);
+  const pending = engine.tick(observation, 0);
+  await Promise.resolve();
+  assert.equal(typeof release, "function");
+  engine.invalidate();
+  release();
+  assert.equal(await pending, undefined);
+
+  // The discarded response cannot re-seed the client cache; the stable scene retries.
+  const fresh = await engine.tick(observation, 250);
+  assert.equal(fresh.output.gaze, "none");
+  assert.equal(fresh.skipped, false);
+  const second = await engine.tick(observation, 500);
+  assert.equal(second.output.gaze, "p1");
+  assert.equal(calls, 2);
+});
+
+test("invalidating a settled engine resets gaze and requires fresh evidence", async () => {
+  let calls = 0;
+  const engine = new ReflexEngine(new JevClient({ ask: async () => {
+    calls++;
+    return { model: "synthetic", answers: answers() };
+  } }));
+  await engine.tick(observation, 0);
+  assert.equal((await engine.tick(observation, 250)).output.gaze, "p1");
+  engine.invalidate();
+  assert.equal((await engine.tick(observation, 500)).output.gaze, "none");
+  assert.equal((await engine.tick(observation, 750)).output.gaze, "p1");
+  assert.equal(calls, 2);
+});

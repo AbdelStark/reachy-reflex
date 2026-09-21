@@ -257,3 +257,73 @@ test("connected app judges consented final text without a camera and never comma
   await expect(page.locator("#decision")).toHaveText("Idle");
   await expect(page.locator("jev-panel").locator("jev-gauge")).toHaveCount(0);
 });
+
+test("slow Jev answers and their cached copies cannot move a fake robot", async ({ page }) => {
+  let blockReady = false;
+  let blocked = false;
+  await page.route("http://127.0.0.1:8048/v1/systemone", async (route) => {
+    const headers = {
+      "Access-Control-Allow-Origin": "http://127.0.0.1:5173",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Content-Type": "application/json",
+    };
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers });
+    const { state } = route.request().postDataJSON();
+    const people = state.people as Array<{ id: string }>;
+    if (blockReady && people.length && !blocked) {
+      blocked = true;
+      await new Promise((resolve) => setTimeout(resolve, 900));
+    }
+    const noul = (value: number) => ({ type: "noul", noul: value });
+    const answers = {
+      attention_target: { type: "choice", choice: people[0]?.id ?? "none", confidence: 0.9 },
+      addressed: noul(0.9), addressed_by_gaze: noul(0.9), wants_reply: noul(0.8),
+      pause_invites_ack: noul(0.1), being_ignored: noul(0.1), someone_leaving: noul(0.1),
+      someone_arriving: noul(0.1), turn_action: { type: "choice", choice: "keep_talking", confidence: 0.9 },
+      engagement: { type: "score", score: 2 }, speaker_mood: { type: "choice", choice: "curious", confidence: 0.8 },
+      group_talking_to_each_other: noul(0.1), robot_named: noul(0.9), question_asked: noul(0.8),
+      laughter_moment: noul(0.1), silence_awkward: noul(0.1),
+    };
+    await route.fulfill({ status: 200, headers, body: JSON.stringify({ model: "fixture", answers }) });
+  });
+  await page.goto("/?preview=1");
+  await page.evaluate(async () => {
+    window.dispatchEvent(new Event("pagehide"));
+    const fixture = { commands: [] as unknown[], detects: 0 };
+    (window as unknown as { fakeReflexMotion: typeof fixture }).fakeReflexMotion = fixture;
+    const canvas = document.createElement("canvas");
+    canvas.width = 320; canvas.height = 240;
+    const context = canvas.getContext("2d")!;
+    let shade = 0;
+    const draw = window.setInterval(() => { context.fillStyle = `rgb(${shade++ % 255},0,0)`; context.fillRect(0, 0, 320, 240); }, 50);
+    const stream = canvas.captureStream(30);
+    const robot = {
+      state: "streaming",
+      setTarget(target: unknown) { fixture.commands.push(target); return true; },
+      gotoTarget(target: unknown) { fixture.commands.push(target); return true; },
+    };
+    const host = {
+      reachy: robot,
+      media: { attachVideo(video: HTMLVideoElement) { video.srcObject = stream; void video.play(); return () => { clearInterval(draw); stream.getTracks().forEach((track) => track.stop()); }; }, robotStream: undefined },
+      onLeave: () => {},
+    };
+    const { mountApp } = await import("/src/embed.ts");
+    mountApp(host as never, async () => ({
+      detect() { fixture.detects++; return [{ x: 0.3, y: 0.2, width: 0.2, height: 0.3 }]; },
+      close() {},
+    }));
+  });
+  await page.locator("#relay-token").fill("t".repeat(32));
+  await page.getByRole("button", { name: "Connect Jev relay" }).click();
+  await page.locator("#tracking-enable").check();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { fakeReflexMotion: { detects: number } }).fakeReflexMotion.detects)).toBeGreaterThan(0);
+  await page.locator("#motion-enable").check();
+  blockReady = true;
+  await expect.poll(() => blocked).toBe(true);
+  await expect(page.locator("#stream-note")).toContainText("motion held", { timeout: 4000 });
+  await page.waitForTimeout(400); // Cached copies must retain the original observation age.
+  expect(await page.evaluate(() => (window as unknown as { fakeReflexMotion: { commands: unknown[] } }).fakeReflexMotion.commands)).toHaveLength(0);
+  await expect.poll(() => page.evaluate(() => (window as unknown as { fakeReflexMotion: { commands: unknown[] } }).fakeReflexMotion.commands.length), { timeout: 5000 }).toBeGreaterThan(0);
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+});

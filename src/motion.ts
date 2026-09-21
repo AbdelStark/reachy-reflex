@@ -8,6 +8,32 @@ export interface RobotMotionPort {
   gotoTarget(target: { head?: number[]; antennas?: number[]; duration: number }): boolean;
 }
 
+export interface MotionEvidence {
+  startedAtMs: number;
+  deliveredAtMs: number;
+  observedFrameAtMs: number;
+  latestFrameAtMs: number;
+  observedPeople: readonly { id: string; bearingDeg?: number }[];
+  latestPeople: readonly { id: string; bearingDeg?: number }[];
+}
+
+/** A model answer may move the robot only while its camera-derived scene is still current. */
+export function motionEvidenceCurrent(evidence: MotionEvidence): boolean {
+  const { startedAtMs, deliveredAtMs, observedFrameAtMs, latestFrameAtMs, observedPeople, latestPeople } = evidence;
+  if (![startedAtMs, deliveredAtMs, observedFrameAtMs, latestFrameAtMs].every(Number.isFinite)
+    || observedFrameAtMs < 0 || observedFrameAtMs > startedAtMs || latestFrameAtMs < observedFrameAtMs
+    || latestFrameAtMs > deliveredAtMs || deliveredAtMs < startedAtMs
+    || startedAtMs - observedFrameAtMs > 500 || deliveredAtMs - latestFrameAtMs > 500
+    || deliveredAtMs - startedAtMs > 750 || observedPeople.length !== latestPeople.length) return false;
+  const latest = new Map(latestPeople.map((person) => [person.id, person.bearingDeg]));
+  if (latest.size !== latestPeople.length || new Set(observedPeople.map((person) => person.id)).size !== observedPeople.length) return false;
+  return observedPeople.every((person) => {
+    const bearing = latest.get(person.id);
+    return Number.isFinite(person.bearingDeg) && Number.isFinite(bearing)
+      && Math.abs(person.bearingDeg! - bearing!) <= 8;
+  });
+}
+
 /** Convert abstract targets only at the hardware boundary, with explicit app limits. */
 export function toSdkTarget(pose: PoseTarget): { head: number[]; antennas: number[] } {
   const values = Object.values(pose);

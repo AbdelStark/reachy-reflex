@@ -4,7 +4,7 @@ import "reachy-jev/panel";
 import type { JevPanelElement } from "reachy-jev/panel";
 import { ReflexEngine } from "./engine.js";
 import { fixtureAsk } from "./fixture.js";
-import { RobotMotionController } from "./motion.js";
+import { RobotMotionController, motionEvidenceCurrent, type MotionEvidence } from "./motion.js";
 import { PerceptionState } from "./perception.js";
 import { RelayTransport } from "./relay.js";
 import { VideoFaceDetector } from "./vision.js";
@@ -14,10 +14,11 @@ import { LocalRobotAsrPort, RobotSpeechInput } from "./robot_speech.js";
 import "./style.css";
 
 type Host = Awaited<ReturnType<typeof connectToHost>>;
+type FaceDetectorPort = Pick<VideoFaceDetector, "detect" | "close">;
 const root = document.querySelector<HTMLElement>("#root");
 if (!root) throw new Error("root element missing");
 
-export function mountApp(host?: Host): void {
+export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDetectorPort> = () => VideoFaceDetector.create()): void {
   const preview = !host;
   root!.innerHTML = `
     <main class="app">
@@ -127,7 +128,7 @@ export function mountApp(host?: Host): void {
     speechStatus.textContent = "Listening on this device. Only final text is kept briefly in this tab.";
   });
   const motion = host ? new RobotMotionController(host.reachy) : undefined;
-  let detector: VideoFaceDetector | undefined;
+  let detector: FaceDetectorPort | undefined;
   let engine: ReflexEngine | undefined = preview ? new ReflexEngine(new JevClient({ ask: fixtureAsk })) : undefined;
   let ticks = 0;
   let active = true;
@@ -135,6 +136,8 @@ export function mountApp(host?: Host): void {
   let lastVideoTime = -1;
   let lastFrameAtMs = -Infinity;
   let detectorEpoch = 0;
+  let motionEpoch = 0;
+  let lastMotionSource: Pick<MotionEvidence, "startedAtMs" | "observedFrameAtMs" | "observedPeople"> | undefined;
   let soundEpoch = 0;
   let sound: RobotSoundInput | undefined;
   let audioOnlyActive = false;
@@ -202,6 +205,7 @@ export function mountApp(host?: Host): void {
       try {
         const transport = new RelayTransport(q<HTMLInputElement>("#relay-url").value, q<HTMLInputElement>("#relay-token").value);
         engine = new ReflexEngine(new JevClient({ ask: transport.ask.bind(transport) }));
+        lastMotionSource = undefined;
         motionToggle.disabled = !detector;
         q<HTMLElement>("#status").textContent = "Relay configured. Face tracking or consented final text can trigger judgments; motion needs live video and explicit enablement.";
         q<HTMLInputElement>("#relay-token").value = "";
@@ -209,7 +213,7 @@ export function mountApp(host?: Host): void {
         q<HTMLElement>("#status").textContent = error instanceof Error ? error.message : "Invalid relay settings";
       }
     });
-    motionToggle.addEventListener("change", () => motion?.setEnabled(motionToggle.checked));
+    motionToggle.addEventListener("change", () => { motionEpoch++; lastMotionSource = undefined; motion?.setEnabled(motionToggle.checked); });
     soundToggle.addEventListener("change", () => {
       const epoch = ++soundEpoch;
       sound?.stop();
@@ -239,10 +243,14 @@ export function mountApp(host?: Host): void {
     });
     trackingToggle.addEventListener("change", () => {
       const epoch = ++detectorEpoch;
+      motionEpoch++;
+      lastMotionSource = undefined;
       if (!trackingToggle.checked) {
         detector?.close();
         detector = undefined;
         perception.clear();
+        lastFrameAtMs = -Infinity;
+        lastVideoTime = -1;
         motionToggle.checked = false;
         motionToggle.disabled = true;
         motion?.setEnabled(false);
@@ -251,7 +259,7 @@ export function mountApp(host?: Host): void {
         return;
       }
       q<HTMLElement>("#status").textContent = "Loading the verified local face model…";
-      void VideoFaceDetector.create().then((ready) => {
+      void createFaceDetector().then((ready) => {
         if (!active || epoch !== detectorEpoch || !trackingToggle.checked) return ready.close();
         detector = ready;
         motionToggle.disabled = !engine;
@@ -275,7 +283,7 @@ export function mountApp(host?: Host): void {
       lastFrameAtMs = now;
       q<HTMLElement>("#video-fallback").hidden = true;
     }
-    catch { q<HTMLElement>("#status").textContent = "Face detection failed; motion paused."; motionToggle.checked = false; motion?.setEnabled(false); }
+    catch { q<HTMLElement>("#status").textContent = "Face detection failed; motion paused."; motionEpoch++; lastMotionSource = undefined; motionToggle.checked = false; motion?.setEnabled(false); }
   }, 100);
 
   async function tick(): Promise<void> {
@@ -295,6 +303,10 @@ export function mountApp(host?: Host): void {
     audioOnlyActive = audioOnly;
     busy = true;
     try {
+      const currentEngine = engine;
+      const trackingVersion = detectorEpoch;
+      const motionVersion = motionEpoch;
+      const observedFrameAtMs = lastFrameAtMs;
       if (preview) {
         if (fixturePerson) perception.acceptFaces([{ x: 0.6, y: 0.2, width: 0.25, height: 0.3 }], now);
       }
@@ -305,9 +317,15 @@ export function mountApp(host?: Host): void {
       }
       if (preview && fixturePerson) observation.transcriptRecent = [{ who: "p1", text: "Reachy, are you listening?" }];
       if (recent.length) observation.transcriptRecent = recent;
-      const result = await engine.tick(observation, now);
-      if (!active) return;
+      const result = await currentEngine.tick(observation, now);
+      if (!active || currentEngine !== engine || (!preview && !audioOnly && trackingVersion !== detectorEpoch)) return;
+      const deliveredAtMs = performance.now();
       if (audioOnly && (!(speechSharing || robotSpeechSharing) || !transcripts.snapshot(performance.now()).length)) return;
+      if (!result.skipped) {
+        lastMotionSource = !result.stale && !audioOnly && motionToggle.checked && trackingVersion === detectorEpoch && motionVersion === motionEpoch
+          ? { startedAtMs: now, observedFrameAtMs, observedPeople: observation.people ?? [] }
+          : undefined;
+      }
       panel.update(preview ? { ...result.panel, source: "fixture" } : result.panel);
       ticks++;
       q<HTMLElement>("#person-count").textContent = String(observation.people?.length ?? 0);
@@ -315,8 +333,22 @@ export function mountApp(host?: Host): void {
       q<HTMLElement>("#decision").textContent = result.stale ? "Stale · idle" : audioOnly ? "Audio only · motion off" : result.output.gaze === "none" ? "Scanning" : `Looking at ${result.output.gaze}`;
       q<HTMLElement>("#stream-note").textContent = preview ? "Deterministic fixture answers" : result.stale ? "Jev unavailable · no new motion" : `${result.model ?? "Model unknown"} · ${Math.round(result.latencyMs ?? 0)} ms`;
       if (result.error) q<HTMLElement>("#status").textContent = `Judgment unavailable (${result.error}); motion paused.`;
-      if (host && motion && !audioOnly && !result.stale && detector && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && now - lastFrameAtMs < 1000) {
-        motion.apply(result.output, now);
+      const motionReady = Boolean(host && motion && !audioOnly && !result.stale && detector && motionToggle.checked
+        && trackingVersion === detectorEpoch && motionVersion === motionEpoch
+        && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
+        && lastMotionSource && motionEvidenceCurrent({ ...lastMotionSource, deliveredAtMs,
+          latestFrameAtMs: lastFrameAtMs, latestPeople: perception.snapshot(deliveredAtMs).people ?? [] }));
+      if (motionReady) {
+        try { motion!.apply(result.output, deliveredAtMs); }
+        catch {
+          motionEpoch++;
+          lastMotionSource = undefined;
+          motionToggle.checked = false;
+          motion!.setEnabled(false);
+          q<HTMLElement>("#status").textContent = "Robot motion request failed; motion disarmed. Use the physical stop if needed.";
+        }
+      } else if (host && motionToggle.checked && !audioOnly && !result.stale) {
+        q<HTMLElement>("#stream-note").textContent = "Judgment shown · motion held (scene changed or answer aged)";
       }
     } catch (error) {
       if (active) q<HTMLElement>("#status").textContent = error instanceof Error ? error.message : "Tick failed";
@@ -327,6 +359,8 @@ export function mountApp(host?: Host): void {
   const dispose = () => {
     active = false;
     detectorEpoch++;
+    motionEpoch++;
+    lastMotionSource = undefined;
     soundEpoch++;
     clearInterval(tickTimer);
     clearInterval(detectTimer);

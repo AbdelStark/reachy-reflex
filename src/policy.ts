@@ -51,9 +51,15 @@ export class ReflexPolicy {
     const events: ReflexEvent[] = [];
     const answers = input.answers;
     const fresh = !input.stale && answers !== undefined;
+    if (fresh && this.lastFresh !== undefined && input.nowMs - this.lastFresh >= 2000) {
+      // A hidden/throttled tab may skip stale ticks entirely. The gap is not evidence.
+      this.ignoredSince = undefined;
+    }
     if (fresh) this.lastFresh = input.nowMs;
     const idle = !fresh && (this.lastFresh === undefined || input.nowMs - this.lastFresh >= 2000);
     if (!fresh && !idle) {
+      // Missing judgments must not count as continued evidence of being ignored.
+      this.ignoredSince = undefined;
       return { target: this.lastTarget, gaze: this.gaze, nod: false, events, idle: false };
     }
     if (idle || !answers) {
@@ -63,6 +69,7 @@ export class ReflexPolicy {
       this.lastAddressHigh = false;
       this.lastAddressPerson = undefined;
       this.lastTurnEvent = undefined;
+      this.ignoredSince = undefined;
       this.noTargetSince = undefined;
       this.lastTarget = { ...attend(25 * Math.sin(input.nowMs * 0.00016 * 2 * Math.PI)), pitchDeg: 0, zMm: 0 };
       return { target: this.lastTarget, gaze: "none", nod: false, events, idle: true };

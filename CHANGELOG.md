@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add a 30-tick self-authored synthetic policy replay corpus and CI gate for gaze, nod, turn, stale, and ignored transitions; reset the ignored timer on stale judgments or a two-second fresh-data gap so missing model evidence cannot age into a droop.
 - Add an off-by-default, bounded five-minute judgment trace with typed answers, policy output, motion-dispatch outcome, browser JSONL download/discard, and no raw text or media fields; fixture and unit tests verify redaction and retention.
 - Bind robot motion to a fresh, stable source observation across slow and cached Jev answers; invalidate in-flight motion on tracking or motion changes, and hold commands when faces drift or video stalls.
 - Allow separately consented final text to drive panel-only judgments when face tracking is absent; keep person attribution unknown and motion off, and idle the panel when text expires.

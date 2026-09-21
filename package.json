@@ -15,7 +15,8 @@
     "dev": "vite --host 127.0.0.1",
     "relay": "node server/main.mjs",
     "test": "npm run build:core && node --test test/*.test.mjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "replay:scenes": "npm run build:core && node scripts/replay_scenes.mjs fixtures/replay_scenes.jsonl"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "1.0.1",

@@ -26,6 +26,7 @@ Node.js 20.19+ is required. `reachy-jev` is installed from a pinned commit of it
 npm ci
 npm run check
 npm test
+npm run replay:scenes
 npm run build
 npx playwright install chromium
 npm run test:e2e
@@ -52,5 +53,11 @@ Faces have session-only IDs `p1`–`p9`, expire after 60 seconds, and are tracke
 ## Local judgment trace
 
 The trace checkbox is off by default. After getting consent from people nearby, an operator can record up to 1,200 processed ticks (about five minutes at 4 Hz) in tab memory, download schema-versioned JSONL, or discard it. Each row contains a policy clock, approximate session-only face IDs/bearings, whether recent text was present, the validated typed judgments, stale/cache metadata, policy output, and whether the motion request was accepted, held, or off. It never includes transcript text, video frames, raw audio, a name, or a wall-clock timestamp. The export is still potentially sensitive behavioral data: keep it private, inspect it before sharing, and do not mistake fixture rows for live Jev or robot evidence. There is no automatic upload, IndexedDB persistence, or model/hardware performance claim. The unit and browser tests check the software format and redaction only.
+
+## Offline policy replay
+
+`npm run replay:scenes` checks a committed, self-authored corpus of 30 synthetic policy ticks across gaze hysteresis, address/nod/turn-taking, and stale/ignored transitions. Each `reflex.scene@1` JSONL row supplies a scene-local clock, session-only person bearings, compact answer overrides, and hand-authored expected gaze, nod, idle, and event outcomes. The runner resets policy between scenes, rejects malformed or out-of-order rows, and exits nonzero on a mismatch; CI runs it on Node 20 and 22. A stale judgment or a gap of at least two seconds between fresh judgments now breaks the continuous “being ignored” timer, so a model outage or hidden browser tab cannot itself count as evidence for a droop.
+
+These are deterministic software regressions, not recorded people, real Jev answers, a calibration set, or a hardware test. They do not measure model accuracy or latency. The optional session trace above is diagnostic and may begin after the policy has accumulated state; it is not interchangeable with this reset-based replay corpus. Real consented scene collection and model/hardware validation remain separate work.
 
 The Hugging Face Space frontmatter is build metadata, not evidence of a deployed Space. A hosted static Space needs a separate HTTPS relay with authentication, rate limits, and a strict origin allowlist; a viewer's browser cannot reach your loopback relay. See [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md), and [CITATION.cff](CITATION.cff).

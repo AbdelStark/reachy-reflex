@@ -69,8 +69,26 @@ test("new speaker can trigger a fresh address and a moderate address resets igno
 test("ignored timer droops only after 20 seconds", () => {
   const policy = new ReflexPolicy();
   const ignored = base(); ignored.being_ignored.noul = 0.8;
-  assert.notDeepEqual(policy.step(tick(0, ignored)).target.zMm, -6);
+  for (let ms = 0; ms < 20_000; ms += 1000) assert.notEqual(policy.step(tick(ms, ignored)).target.zMm, -6);
   assert.equal(policy.step(tick(20_000, ignored)).target.zMm, -6);
+});
+
+test("stale judgments break the ignored streak before a new droop timer starts", () => {
+  const policy = new ReflexPolicy();
+  const ignored = base(); ignored.being_ignored.noul = 0.8;
+  policy.step(tick(0, ignored));
+  policy.step(tick(10_000, ignored, { stale: true }));
+  assert.notEqual(policy.step(tick(20_000, ignored)).target.zMm, -6);
+  for (let ms = 21_000; ms < 40_000; ms += 1000) policy.step(tick(ms, ignored));
+  assert.equal(policy.step(tick(40_000, ignored)).target.zMm, -6);
+});
+
+test("a hidden-tab gap cannot turn old ignored evidence into an immediate droop", () => {
+  const policy = new ReflexPolicy();
+  const ignored = base(); ignored.being_ignored.noul = 0.8;
+  policy.step(tick(0, ignored));
+  policy.step(tick(1000, ignored));
+  assert.notEqual(policy.step(tick(30_000, ignored)).target.zMm, -6);
 });
 
 test("missing attention target drifts to idle scan after three seconds", () => {

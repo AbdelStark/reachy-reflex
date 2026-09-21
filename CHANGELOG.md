@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Add an opt-in, origin- and token-gated loopback event bridge with distinct read-only WebSocket credentials. Browser publication requires current camera evidence; no Conversation App consumer or robot delivery is claimed.
+- Exercise the complete synthetic browser-to-loopback-relay-to-WebSocket-subscriber path without TypeSafe calls or robot motion.
 - Align the shared `reachy-jev` pin with the typed question-wire release used by the other Reachy apps; the question set and expected wire digest are unchanged.
 - Reject frames with more than nine detected faces instead of truncating the room; clear prior labels, pause judgments, disarm motion, and require a recovered scene plus explicit re-arm. Unit and fake-host browser tests cover the overflow and recovery path.
 - Pin the shared question-bank validator that rejects malformed/unknown question kinds before wire projection; test the 16-question and empty-room expansions against the installed package.

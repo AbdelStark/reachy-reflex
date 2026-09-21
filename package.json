@@ -16,7 +16,8 @@
     "relay": "node server/main.mjs",
     "test": "npm run build:core && node --test test/*.test.mjs",
     "test:e2e": "playwright test",
-    "replay:scenes": "npm run build:core && node scripts/replay_scenes.mjs fixtures/replay_scenes.jsonl"
+    "replay:scenes": "npm run build:core && node scripts/replay_scenes.mjs fixtures/replay_scenes.jsonl",
+    "replay:trace": "npm run build:core && node scripts/replay_trace.mjs"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "1.0.1",

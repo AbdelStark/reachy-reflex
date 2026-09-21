@@ -74,8 +74,8 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
     traceDownload.disabled = traceClear.disabled = trace.count === 0;
     traceStatus.textContent = `${traceToggle.checked ? "Recording" : "Trace off"}. ${trace.count} text-free ticks in this tab${preview ? " (fixture only)" : ""}.`;
   };
-  traceToggle.addEventListener("change", updateTraceStatus);
-  traceClear.addEventListener("click", () => { trace.clear(); updateTraceStatus(); });
+  traceToggle.addEventListener("change", () => { if (traceToggle.checked) invalidateJudgment(); updateTraceStatus(); });
+  traceClear.addEventListener("click", () => { trace.clear(); if (traceToggle.checked) invalidateJudgment(); updateTraceStatus(); });
   traceDownload.addEventListener("click", () => {
     if (!trace.count) return;
     const url = URL.createObjectURL(new Blob([trace.toJSONL()], { type: "application/x-ndjson" }));
@@ -164,8 +164,10 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
   let lastFrameAtMs = -Infinity;
   let detectorEpoch = 0;
   let motionEpoch = 0;
+  let traceEpoch = 0;
   let lastMotionSource: Pick<MotionEvidence, "startedAtMs" | "observedFrameAtMs" | "observedPeople"> | undefined;
   function invalidateJudgment() {
+    traceEpoch++;
     engine?.invalidate();
     lastMotionSource = undefined;
   }
@@ -240,6 +242,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
       try {
         const transport = new RelayTransport(q<HTMLInputElement>("#relay-url").value, q<HTMLInputElement>("#relay-token").value);
         engine = new ReflexEngine(new JevClient({ ask: transport.ask.bind(transport) }));
+        traceEpoch++;
         lastMotionSource = undefined;
         motionToggle.disabled = !detector;
         q<HTMLElement>("#status").textContent = "Relay configured. Face tracking or consented final text can trigger judgments; motion needs live video and explicit enablement.";
@@ -392,7 +395,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
         q<HTMLElement>("#stream-note").textContent = "Judgment shown · motion held (scene changed or answer aged)";
       }
       if (traceToggle.checked) {
-        trace.add(observation, result, now, motionOutcome);
+        trace.add(observation, result, now, motionOutcome, traceEpoch);
         updateTraceStatus();
       }
     } catch (error) {

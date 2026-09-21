@@ -1,5 +1,9 @@
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 test("fixture preview renders all 16 signals and reacts to synthetic room changes", async ({ page }) => {
   const requests: string[] = [];
@@ -30,10 +34,13 @@ test("trace is opt-in, bounded to this tab, downloadable, and text-free", async 
   const path = await download.path();
   expect(path).not.toBeNull();
   const rows = (await readFile(path!, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-  expect(rows[0].schema).toBe("reflex.tick@1");
+  expect(rows[0].schema).toBe("reflex.tick@2");
+  expect(Number.isSafeInteger(rows[0].policy_epoch)).toBe(true);
   expect(rows[0].decision.motion).toBe("preview");
   expect(rows.some((row) => row.people.some((person: { id: string }) => person.id === "p1"))).toBe(true);
   expect(rows.every((row) => !("transcript" in row) && !("frames" in row))).toBe(true);
+  const replay = await execFileAsync("npm", ["run", "replay:trace", "--", path!]);
+  expect(replay.stdout).toContain("0 mismatches");
   await page.locator("#trace-enable").uncheck();
   await page.locator("#trace-clear").click();
   await expect(page.locator("#trace-download")).toBeDisabled();

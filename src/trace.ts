@@ -4,7 +4,7 @@ import type { RoomObservation } from "reachy-jev";
 import type { EngineTick } from "./engine.js";
 import type { ReflexAnswers } from "./policy.js";
 
-export const TRACE_SCHEMA = "reflex.tick@1";
+export const TRACE_SCHEMA = "reflex.tick@2";
 export const MAX_TRACE_ROWS = 1_200;
 export type MotionOutcome = "preview" | "off" | "held" | "accepted" | "not_accepted" | "error";
 
@@ -39,6 +39,7 @@ function traceAnswers(answers: ReflexAnswers | undefined) {
 
 export interface TraceTick {
   schema: typeof TRACE_SCHEMA;
+  policy_epoch: number;
   elapsed_ms: number;
   policy_clock_ms: number;
   people: { id: string; bearing_deg: number }[];
@@ -68,14 +69,18 @@ export class SessionTrace {
 
   get count(): number { return this.rows.length; }
 
-  add(observation: RoomObservation, tick: EngineTick, nowMs: number, motion: MotionOutcome): void {
+  add(observation: RoomObservation, tick: EngineTick, nowMs: number, motion: MotionOutcome, policyEpoch: number): void {
     if (!Number.isFinite(nowMs) || nowMs < 0) throw new RangeError("invalid trace time");
+    if (!Number.isSafeInteger(policyEpoch) || policyEpoch < 0 || (this.rows.length && policyEpoch < this.rows.at(-1)!.policy_epoch)) {
+      throw new RangeError("invalid policy epoch");
+    }
     if (!motionOutcome(motion)) throw new TypeError("invalid motion outcome");
-    if (this.startMs !== undefined && nowMs < this.startMs) throw new RangeError("trace time went backward");
+    if (this.rows.length && nowMs <= this.rows.at(-1)!.policy_clock_ms) throw new RangeError("trace time went backward");
     this.startMs ??= nowMs;
     const target = tick.output.target;
     const row: TraceTick = {
       schema: TRACE_SCHEMA,
+      policy_epoch: policyEpoch,
       elapsed_ms: Math.round(nowMs - this.startMs),
       policy_clock_ms: nowMs,
       people: (observation.people ?? []).filter((person) => personId(person.id) && Number.isFinite(person.bearingDeg)).slice(0, 9).map((person) => ({

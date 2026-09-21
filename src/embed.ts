@@ -10,6 +10,7 @@ import { RelayTransport } from "./relay.js";
 import { VideoFaceDetector } from "./vision.js";
 import { BrowserSpeechInput, RecentTranscripts, browserRecognition } from "./speech.js";
 import { RobotSoundInput } from "./sound.js";
+import { LocalRobotAsrPort, RobotSpeechInput } from "./robot_speech.js";
 import "./style.css";
 
 type Host = Awaited<ReturnType<typeof connectToHost>>;
@@ -34,6 +35,9 @@ function mountApp(host?: Host): void {
         <label class="tracking-toggle" ${preview ? "hidden" : ""}><input id="tracking-enable" type="checkbox"><span>Enable face tracking. Frames stay here; MediaPipe may send usage metrics to Google.</span></label>
         <label class="tracking-toggle" ${preview ? "hidden" : ""}><input id="sound-enable" type="checkbox"><span>Use Reachy's incoming audio track for local sound-energy hints. No audio or raw samples are stored or sent to Jev; only a level bucket and coarse activity flag. This is not voice recognition, direction finding, or echo cancellation.</span></label>
         <p id="sound-status" role="status" aria-live="polite" ${preview ? "hidden" : ""}>Robot audio analysis off.</p>
+        <label class="tracking-toggle robot-consent" ${preview ? "hidden" : ""}><input id="robot-speech-consent" type="checkbox"><span>Transcribe everyone audible on Reachy's incoming audio track. Audio segments go only to the configured local ASR process; up to two final texts (200 characters each) may go to Jev through the relay. This is an energy delimiter, not reliable VAD, direction finding, or speaker identity. Ask people nearby for consent first.</span></label>
+        <div class="robot-asr-config" ${preview ? "hidden" : ""}><label>Local ASR URL<input id="robot-asr-url" type="url" value="http://127.0.0.1:8051" autocomplete="url"></label><label>ASR session token<input id="robot-asr-token" type="password" minlength="32" autocomplete="off"></label><button id="robot-speech-toggle" type="button">Start robot transcription</button></div>
+        <p id="robot-speech-status" role="status" aria-live="polite" ${preview ? "hidden" : ""}>Robot transcription off; no robot audio sent to ASR.</p>
         <label class="tracking-toggle speech-consent"><input id="speech-consent" type="checkbox"><span>Use this device's microphone for browser speech recognition. The browser may send audio to its vendor; up to two final utterances (200 characters each) go to Jev through the configured relay. No speaker identity is inferred.</span></label>
         <button id="speech-toggle" type="button">Start transcription</button><p id="speech-status" role="status" aria-live="polite">Microphone off; no transcript is sent.</p>
         <label class="motion-toggle" ${preview ? "hidden" : ""}><input id="motion-enable" type="checkbox" disabled><span>Enable experimental robot motion</span></label>
@@ -52,12 +56,28 @@ function mountApp(host?: Host): void {
   const trackingToggle = q<HTMLInputElement>("#tracking-enable");
   const soundToggle = q<HTMLInputElement>("#sound-enable");
   const soundStatus = q<HTMLElement>("#sound-status");
+  const robotSpeechConsent = q<HTMLInputElement>("#robot-speech-consent");
+  const robotSpeechToggle = q<HTMLButtonElement>("#robot-speech-toggle");
+  const robotSpeechStatus = q<HTMLElement>("#robot-speech-status");
   const speechConsent = q<HTMLInputElement>("#speech-consent");
   const speechToggle = q<HTMLButtonElement>("#speech-toggle");
   const speechStatus = q<HTMLElement>("#speech-status");
   const perception = new PerceptionState();
   const transcripts = new RecentTranscripts();
   let speechSharing = false;
+  let robotSpeechSharing = false;
+  let robotSpeech: RobotSpeechInput | undefined;
+  let robotSpeechEpoch = 0;
+  const stopRobotSpeech = (status: string) => {
+    const wasRunning = robotSpeechSharing || robotSpeech !== undefined;
+    robotSpeechEpoch++;
+    robotSpeech?.stop();
+    robotSpeech = undefined;
+    robotSpeechSharing = false;
+    if (wasRunning) transcripts.clear();
+    robotSpeechToggle.textContent = "Start robot transcription";
+    robotSpeechStatus.textContent = status;
+  };
   const speech = new BrowserSpeechInput(
     browserRecognition,
     (text) => {
@@ -78,9 +98,9 @@ function mountApp(host?: Host): void {
     if (!speechConsent.checked) {
       speech.stop();
       speechSharing = false;
-      transcripts.clear();
+      if (!robotSpeechSharing) transcripts.clear();
       speechToggle.textContent = "Start transcription";
-      speechStatus.textContent = "Microphone off; recent text cleared. An in-flight relay request cannot be recalled.";
+      speechStatus.textContent = robotSpeechSharing ? "Device microphone off; robot transcription remains active." : "Microphone off; recent text cleared. An in-flight relay request cannot be recalled.";
     } else speechStatus.textContent = "Consent set for this tab. Press Start transcription to listen.";
   });
   speechToggle.addEventListener("click", () => {
@@ -96,6 +116,7 @@ function mountApp(host?: Host): void {
       speechStatus.textContent = "Check microphone consent before starting transcription.";
       return;
     }
+    if (robotSpeechSharing) stopRobotSpeech("Robot transcription stopped; recent text cleared. An in-flight relay request cannot be recalled.");
     speechSharing = true;
     if (!speech.start()) {
       speechSharing = false;
@@ -118,6 +139,10 @@ function mountApp(host?: Host): void {
   let sound: RobotSoundInput | undefined;
   let fixturePerson = false;
   const detachVideo = host?.media.attachVideo(video);
+  robotSpeechConsent.addEventListener("change", () => {
+    if (!robotSpeechConsent.checked) stopRobotSpeech("Robot transcription off. Its recent text was cleared if active; an in-flight relay request cannot be recalled.");
+    else robotSpeechStatus.textContent = "Consent set for this tab. Start only after people nearby have agreed.";
+  });
   q<HTMLElement>("#connection").textContent = preview ? "FIXTURE PREVIEW" : "ROBOT CONNECTED";
   q<HTMLElement>("#video-fallback").textContent = preview ? "No camera in fixture preview" : "Waiting for robot video…";
 
@@ -125,6 +150,52 @@ function mountApp(host?: Host): void {
     q<HTMLButtonElement>("#preview-person").addEventListener("click", () => { fixturePerson = true; });
     q<HTMLButtonElement>("#preview-empty").addEventListener("click", () => { fixturePerson = false; perception.clear(); });
   } else {
+    robotSpeechToggle.addEventListener("click", () => {
+      if (robotSpeechSharing) {
+        stopRobotSpeech("Robot transcription stopped; recent text cleared. An in-flight relay request cannot be recalled.");
+        return;
+      }
+      if (!robotSpeechConsent.checked) {
+        robotSpeechStatus.textContent = "Check robot-audio consent before starting.";
+        return;
+      }
+      const stream = host.media.robotStream;
+      if (!stream?.getAudioTracks().some((track: MediaStreamTrack) => track.readyState === "live")) {
+        robotSpeechStatus.textContent = "Robot audio stream unavailable. Try again after reconnecting.";
+        return;
+      }
+      let asr: LocalRobotAsrPort;
+      try {
+        asr = new LocalRobotAsrPort(q<HTMLInputElement>("#robot-asr-url").value, q<HTMLInputElement>("#robot-asr-token").value);
+      } catch (error) {
+        robotSpeechStatus.textContent = error instanceof Error ? error.message : "Invalid local ASR settings";
+        return;
+      }
+      q<HTMLInputElement>("#robot-asr-token").value = "";
+      speech.stop();
+      speechSharing = false;
+      transcripts.clear();
+      speechToggle.textContent = "Start transcription";
+      speechStatus.textContent = "Device microphone off; recent text cleared.";
+      const epoch = ++robotSpeechEpoch;
+      const candidate = new RobotSpeechInput(stream, asr, (text) => {
+        if (robotSpeechSharing && epoch === robotSpeechEpoch && transcripts.accept(text, performance.now())) robotSpeechStatus.textContent = "Final robot-stream utterance captured; recent text may be sent to Jev for 30 seconds.";
+      }, (status) => {
+        if (epoch !== robotSpeechEpoch) return;
+        robotSpeechStatus.textContent = status === "segment" ? "Sending one bounded audio segment to local ASR…" : status === "busy" ? "Local ASR busy; extra audio segment dropped." : "Local robot ASR failed; check the local process and token.";
+      });
+      robotSpeech = candidate;
+      robotSpeechSharing = true;
+      robotSpeechToggle.textContent = "Stop robot transcription";
+      robotSpeechStatus.textContent = "Starting robot audio capture…";
+      void candidate.start().then(() => {
+        if (epoch !== robotSpeechEpoch) { candidate.stop(); return; }
+        robotSpeechStatus.textContent = "Listening to Reachy's incoming audio track. Only final text enters room state.";
+      }).catch(() => {
+        candidate.stop();
+        if (epoch === robotSpeechEpoch) stopRobotSpeech("Robot transcription unavailable; check the audio track and browser support.");
+      });
+    });
     q<HTMLFormElement>("#relay-form").addEventListener("submit", (event) => {
       event.preventDefault();
       try {
@@ -220,7 +291,7 @@ function mountApp(host?: Host): void {
         if (reading) observation.sound = reading;
       }
       if (preview && fixturePerson) observation.transcriptRecent = [{ who: "p1", text: "Reachy, are you listening?" }];
-      if (speechSharing) observation.transcriptRecent = transcripts.snapshot(now);
+      if (speechSharing || robotSpeechSharing) observation.transcriptRecent = transcripts.snapshot(now);
       const result = await engine.tick(observation, now);
       if (!active) return;
       panel.update(preview ? { ...result.panel, source: "fixture" } : result.panel);
@@ -248,6 +319,7 @@ function mountApp(host?: Host): void {
     motion?.setEnabled(false);
     detector?.close();
     speech.stop();
+    stopRobotSpeech("Robot transcription off.");
     sound?.stop();
     sound = undefined;
     transcripts.clear();

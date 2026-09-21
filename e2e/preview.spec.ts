@@ -107,3 +107,73 @@ test("local robot-stream analyser reads synthetic audio without speaker output",
   expect(result?.levelDbfs).toBeGreaterThan(-60);
   expect(result?.voiceDetected).toBe(true);
 });
+
+test("synthetic robot-stream worklet sends a final segment only to the local ASR port", async ({ page }) => {
+  await page.goto("/?preview=1");
+  await expect(page.locator("#robot-speech-toggle")).toBeHidden();
+  const result = await page.evaluate(async () => {
+    const { RobotSpeechInput } = await import("/src/robot_speech.ts");
+    const generator = new AudioContext();
+    const oscillator = generator.createOscillator();
+    const gain = generator.createGain();
+    gain.gain.value = 0.2;
+    const destination = generator.createMediaStreamDestination();
+    oscillator.connect(gain).connect(destination);
+    const finals: string[] = [];
+    const segments: number[] = [];
+    const input = new RobotSpeechInput(destination.stream, {
+      async transcribe(pcm: Uint8Array) { segments.push(pcm.length); return "Reachy, look here"; },
+    }, (text: string) => finals.push(text), () => {});
+    try {
+      await generator.resume();
+      await input.start();
+      oscillator.start();
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      oscillator.stop();
+      await new Promise((resolve) => setTimeout(resolve, 850));
+      return { finals, segments, trackState: destination.stream.getAudioTracks()[0]?.readyState };
+    } finally {
+      input.stop();
+      await generator.close();
+    }
+  });
+  expect(result.finals).toEqual(["Reachy, look here"]);
+  expect(result.segments).toHaveLength(1);
+  expect(result.segments[0]).toBeGreaterThanOrEqual(16_000);
+  expect(result.trackState).toBe("live");
+});
+
+test("stopping robot transcription discards a late ASR result and preserves the host track", async ({ page }) => {
+  await page.goto("/?preview=1");
+  const result = await page.evaluate(async () => {
+    const { RobotSpeechInput } = await import("/src/robot_speech.ts");
+    const generator = new AudioContext();
+    const oscillator = generator.createOscillator();
+    const gain = generator.createGain();
+    gain.gain.value = 0.2;
+    const destination = generator.createMediaStreamDestination();
+    oscillator.connect(gain).connect(destination);
+    let resolveText: ((text: string) => void) | undefined;
+    let called = false;
+    const finals: string[] = [];
+    const input = new RobotSpeechInput(destination.stream, {
+      transcribe: () => { called = true; return new Promise<string>((resolve) => { resolveText = resolve; }); },
+    }, (text: string) => finals.push(text), () => {});
+    try {
+      await generator.resume();
+      await input.start();
+      oscillator.start();
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      oscillator.stop();
+      await new Promise((resolve) => setTimeout(resolve, 850));
+      input.stop();
+      resolveText?.("late transcript");
+      await Promise.resolve();
+      return { called, finals, trackState: destination.stream.getAudioTracks()[0]?.readyState };
+    } finally {
+      input.stop();
+      await generator.close();
+    }
+  });
+  expect(result).toEqual({ called: true, finals: [], trackState: "live" });
+});

@@ -17,7 +17,7 @@ type Host = Awaited<ReturnType<typeof connectToHost>>;
 const root = document.querySelector<HTMLElement>("#root");
 if (!root) throw new Error("root element missing");
 
-function mountApp(host?: Host): void {
+export function mountApp(host?: Host): void {
   const preview = !host;
   root!.innerHTML = `
     <main class="app">
@@ -137,6 +137,7 @@ function mountApp(host?: Host): void {
   let detectorEpoch = 0;
   let soundEpoch = 0;
   let sound: RobotSoundInput | undefined;
+  let audioOnlyActive = false;
   let fixturePerson = false;
   const detachVideo = host?.media.attachVideo(video);
   robotSpeechConsent.addEventListener("change", () => {
@@ -202,7 +203,7 @@ function mountApp(host?: Host): void {
         const transport = new RelayTransport(q<HTMLInputElement>("#relay-url").value, q<HTMLInputElement>("#relay-token").value);
         engine = new ReflexEngine(new JevClient({ ask: transport.ask.bind(transport) }));
         motionToggle.disabled = !detector;
-        q<HTMLElement>("#status").textContent = "Relay configured. Judgments will run when video is available; motion remains off.";
+        q<HTMLElement>("#status").textContent = "Relay configured. Face tracking or consented final text can trigger judgments; motion needs live video and explicit enablement.";
         q<HTMLInputElement>("#relay-token").value = "";
       } catch (error) {
         q<HTMLElement>("#status").textContent = error instanceof Error ? error.message : "Invalid relay settings";
@@ -246,7 +247,7 @@ function mountApp(host?: Host): void {
         motionToggle.disabled = true;
         motion?.setEnabled(false);
         panel.update({ gauges: [], stale: true });
-        q<HTMLElement>("#status").textContent = "Face tracking off; no judgments or motion.";
+        q<HTMLElement>("#status").textContent = "Face tracking off; final consented text can still be judged. Motion is off.";
         return;
       }
       q<HTMLElement>("#status").textContent = "Loading the verified local face model…";
@@ -258,7 +259,7 @@ function mountApp(host?: Host): void {
       }).catch(() => {
         if (epoch !== detectorEpoch) return;
         trackingToggle.checked = false;
-        q<HTMLElement>("#status").textContent = "Face detector unavailable; judgments and motion are disabled.";
+        q<HTMLElement>("#status").textContent = "Face detector unavailable; only consented final text can be judged. Motion is disabled.";
         motionToggle.disabled = true;
       });
     });
@@ -278,9 +279,21 @@ function mountApp(host?: Host): void {
   }, 100);
 
   async function tick(): Promise<void> {
-    if (!active || busy || !engine || document.visibilityState !== "visible" || (!preview && !detector)) return;
-    busy = true;
+    if (!active || busy || !engine || document.visibilityState !== "visible") return;
     const now = performance.now();
+    const recent = speechSharing || robotSpeechSharing ? transcripts.snapshot(now) : [];
+    const audioOnly = !preview && !detector;
+    if (audioOnly && !recent.length) {
+      if (audioOnlyActive) {
+        audioOnlyActive = false;
+        panel.update({ gauges: [], stale: true });
+        q<HTMLElement>("#decision").textContent = "Idle";
+        q<HTMLElement>("#stream-note").textContent = "No recent final text · motion off";
+      }
+      return;
+    }
+    audioOnlyActive = audioOnly;
+    busy = true;
     try {
       if (preview) {
         if (fixturePerson) perception.acceptFaces([{ x: 0.6, y: 0.2, width: 0.25, height: 0.3 }], now);
@@ -291,17 +304,18 @@ function mountApp(host?: Host): void {
         if (reading) observation.sound = reading;
       }
       if (preview && fixturePerson) observation.transcriptRecent = [{ who: "p1", text: "Reachy, are you listening?" }];
-      if (speechSharing || robotSpeechSharing) observation.transcriptRecent = transcripts.snapshot(now);
+      if (recent.length) observation.transcriptRecent = recent;
       const result = await engine.tick(observation, now);
       if (!active) return;
+      if (audioOnly && (!(speechSharing || robotSpeechSharing) || !transcripts.snapshot(performance.now()).length)) return;
       panel.update(preview ? { ...result.panel, source: "fixture" } : result.panel);
       ticks++;
       q<HTMLElement>("#person-count").textContent = String(observation.people?.length ?? 0);
       q<HTMLElement>("#tick-count").textContent = String(ticks);
-      q<HTMLElement>("#decision").textContent = result.stale ? "Stale · idle" : result.output.gaze === "none" ? "Scanning" : `Looking at ${result.output.gaze}`;
+      q<HTMLElement>("#decision").textContent = result.stale ? "Stale · idle" : audioOnly ? "Audio only · motion off" : result.output.gaze === "none" ? "Scanning" : `Looking at ${result.output.gaze}`;
       q<HTMLElement>("#stream-note").textContent = preview ? "Deterministic fixture answers" : result.stale ? "Jev unavailable · no new motion" : `${result.model ?? "Model unknown"} · ${Math.round(result.latencyMs ?? 0)} ms`;
       if (result.error) q<HTMLElement>("#status").textContent = `Judgment unavailable (${result.error}); motion paused.`;
-      if (host && motion && !result.stale && detector && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && now - lastFrameAtMs < 1000) {
+      if (host && motion && !audioOnly && !result.stale && detector && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && now - lastFrameAtMs < 1000) {
         motion.apply(result.output, now);
       }
     } catch (error) {

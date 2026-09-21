@@ -40,6 +40,22 @@ test("one engine tick batches bank questions, then cached tick skips network", a
   assert.equal(request.state.schema, "room_state@1");
 });
 
+test("final text without camera people has unknown speaker and no invented gaze target", async () => {
+  let sent;
+  const audioAnswers = { ...answers(), attention_target: { type: "choice", choice: "none", confidence: 0.99 } };
+  const engine = new ReflexEngine(new JevClient({ ask: async (state, questions) => {
+    sent = { state, questions };
+    return { model: "fixture", answers: audioAnswers };
+  } }));
+  const result = await engine.tick({ transcriptRecent: [{ who: "unknown", text: "Reachy, are you listening?", endedSecondsAgo: 0.5 }] }, 0);
+  assert.equal(result.stale, false);
+  assert.equal(result.output.gaze, "none");
+  assert.equal(result.panel.gauges.length, 16);
+  assert.deepEqual(sent.state.people, []);
+  assert.deepEqual(sent.state.transcript_recent, [{ who: "unknown", text: "Reachy, are you listening?", ended: "just now" }]);
+  assert.deepEqual(sent.questions.attention_target.criteria, { none: null });
+});
+
 test("wrong answer kind never actuates from model data", async () => {
   const wrong = answers();
   wrong.attention_target = { type: "noul", noul: 0.9 };

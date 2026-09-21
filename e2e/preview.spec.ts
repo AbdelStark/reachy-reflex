@@ -177,3 +177,83 @@ test("stopping robot transcription discards a late ASR result and preserves the 
   });
   expect(result).toEqual({ called: true, finals: [], trackState: "live" });
 });
+
+test("connected app judges consented final text without a camera and never commands motion", async ({ page }) => {
+  const states: Array<{ people: unknown[]; transcript_recent?: Array<{ who: string; text: string }> }> = [];
+  let blockNext = false;
+  let releaseBlocked: (() => void) | undefined;
+  await page.route("http://127.0.0.1:8048/v1/systemone", async (route) => {
+    const headers = {
+      "Access-Control-Allow-Origin": "http://127.0.0.1:5173",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Content-Type": "application/json",
+    };
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers });
+    const { state } = route.request().postDataJSON();
+    states.push(state);
+    if (blockNext) {
+      blockNext = false;
+      await new Promise<void>((resolve) => { releaseBlocked = resolve; });
+    }
+    const noul = (value: number) => ({ type: "noul", noul: value });
+    const answers = {
+      attention_target: { type: "choice", choice: "none", confidence: 0.99 },
+      addressed: noul(0.9), addressed_by_gaze: noul(0.05), wants_reply: noul(0.8),
+      pause_invites_ack: noul(0.1), being_ignored: noul(0.1), someone_leaving: noul(0.1),
+      someone_arriving: noul(0.1), turn_action: { type: "choice", choice: "keep_talking", confidence: 0.9 },
+      engagement: { type: "score", score: 0 }, speaker_mood: { type: "choice", choice: "curious", confidence: 0.8 },
+      group_talking_to_each_other: noul(0.1), robot_named: noul(0.9), question_asked: noul(0.8),
+      laughter_moment: noul(0.1), silence_awkward: noul(0.1),
+    };
+    await route.fulfill({ status: 200, headers, body: JSON.stringify({ model: "fixture", answers }) });
+  });
+  await page.addInitScript(() => {
+    class FakeRecognition {
+      continuous = false;
+      interimResults = true;
+      lang = "";
+      onresult: ((event: { resultIndex: number; results: { isFinal: boolean; 0: { transcript: string } }[] }) => void) | null = null;
+      onerror: (() => void) | null = null;
+      onend: (() => void) | null = null;
+      start() { (window as unknown as { fakeRecognition: FakeRecognition }).fakeRecognition = this; }
+      abort() {}
+      emit(text: string) { this.onresult?.({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: text } }] }); }
+    }
+    (window as unknown as { SpeechRecognition: typeof FakeRecognition }).SpeechRecognition = FakeRecognition;
+  });
+  await page.goto("/?preview=1");
+  await page.evaluate(async () => {
+    window.dispatchEvent(new Event("pagehide")); // Dispose the fixture loop before mounting a fake host.
+    const commands: unknown[] = [];
+    (window as unknown as { robotCommands: unknown[] }).robotCommands = commands;
+    const robot = {
+      state: "streaming",
+      setTarget(target: unknown) { commands.push(target); return true; },
+      gotoTarget(target: unknown) { commands.push(target); return true; },
+    };
+    const host = { reachy: robot, media: { attachVideo: () => () => {}, robotStream: undefined }, onLeave: () => {} };
+    const { mountApp } = await import("/src/embed.ts");
+    mountApp(host as never);
+  });
+  await page.locator("#relay-token").fill("t".repeat(32));
+  await page.getByRole("button", { name: "Connect Jev relay" }).click();
+  await expect(page.locator("#motion-enable")).toBeDisabled();
+  await page.waitForTimeout(350);
+  expect(states).toHaveLength(0);
+  await page.locator("#speech-consent").check();
+  await page.getByRole("button", { name: "Start transcription" }).click();
+  await page.evaluate(() => (window as unknown as { fakeRecognition: { emit(text: string): void } }).fakeRecognition.emit("Reachy, are you listening?"));
+  await expect(page.locator("#decision")).toHaveText("Audio only · motion off");
+  await expect(page.locator("jev-panel").locator("jev-gauge")).toHaveCount(16);
+  expect(states.length).toBeGreaterThan(0);
+  expect(states[0].people).toEqual([]);
+  expect(states[0].transcript_recent).toEqual([{ who: "unknown", text: "Reachy, are you listening?", ended: "just now" }]);
+  expect(await page.evaluate(() => (window as unknown as { robotCommands: unknown[] }).robotCommands)).toEqual([]);
+  blockNext = true;
+  await expect.poll(() => Boolean(releaseBlocked)).toBe(true);
+  await page.locator("#speech-consent").uncheck();
+  releaseBlocked?.();
+  await expect(page.locator("#decision")).toHaveText("Idle");
+  await expect(page.locator("jev-panel").locator("jev-gauge")).toHaveCount(0);
+});

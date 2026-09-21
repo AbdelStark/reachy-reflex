@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Document the opt-in Reachy Conscience speaking writer now available for this relay; its enqueue and operator-quiet assertions remain unverified on hardware and are not playback receipts.
 - Add an opt-in, distinct-token local speaking-state writer/read bridge with bounded monotonic updates and 1.5-second expiry. A synthetic browser-to-relay-to-subscriber test now exercises a camera-gated `yield` hint and verifies expiry; no owned conversation writer, playback-complete signal, or live TTS consumer is claimed.
 - Version opt-in traces as `reflex.tick@3` to distinguish asserted quiet from unknown speaking state; the offline replay reader still accepts prior `@2` traces. Hold proposed nod motion while speaking state is unknown.
 - Show tab-scoped reported token usage and unresolved requests without inferring a model-specific dollar cost or invoice.

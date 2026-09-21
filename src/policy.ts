@@ -54,12 +54,16 @@ export class ReflexPolicy {
     if (fresh && this.lastFresh !== undefined && input.nowMs - this.lastFresh >= 2000) {
       // A hidden/throttled tab may skip stale ticks entirely. The gap is not evidence.
       this.ignoredSince = undefined;
+      this.noTargetSince = undefined;
+      this.gazeHysteresis.reset();
     }
     if (fresh) this.lastFresh = input.nowMs;
     const idle = !fresh && (this.lastFresh === undefined || input.nowMs - this.lastFresh >= 2000);
     if (!fresh && !idle) {
-      // Missing judgments must not count as continued evidence of being ignored.
+      // Missing judgments cannot complete a gaze switch or age a no-target timer.
       this.ignoredSince = undefined;
+      this.noTargetSince = undefined;
+      this.gazeHysteresis.reset();
       return { target: this.lastTarget, gaze: this.gaze, nod: false, events, idle: false };
     }
     if (idle || !answers) {

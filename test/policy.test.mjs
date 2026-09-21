@@ -100,8 +100,41 @@ test("missing attention target drifts to idle scan after three seconds", () => {
   assert.equal(policy.step(tick(250)).gaze, "p1");
   const noTarget = base(); noTarget.attention_target = { choice: "none", confidence: 0.9 };
   assert.equal(policy.step(tick(500, noTarget)).gaze, "p1");
+  policy.step(tick(2000, noTarget));
   assert.equal(policy.step(tick(3400, noTarget)).idle, false);
   const scan = policy.step(tick(3500, noTarget));
   assert.equal(scan.idle, true);
   assert.equal(scan.gaze, "none");
+});
+
+test("stale evidence breaks a partial gaze switch and no-target countdown", () => {
+  const policy = new ReflexPolicy();
+  assert.equal(policy.step(tick(0)).gaze, "none");
+  assert.equal(policy.step(tick(250, base(), { stale: true })).gaze, "none");
+  assert.equal(policy.step(tick(500)).gaze, "none");
+  assert.equal(policy.step(tick(750)).gaze, "p1");
+
+  const noTarget = base(); noTarget.attention_target = { choice: "none", confidence: 0.9 };
+  assert.equal(policy.step(tick(1000, noTarget)).idle, false);
+  assert.equal(policy.step(tick(3000, noTarget)).idle, false);
+  assert.equal(policy.step(tick(3200, noTarget, { stale: true })).idle, false);
+  assert.equal(policy.step(tick(3500, noTarget)).idle, false);
+  policy.step(tick(4500, noTarget));
+  policy.step(tick(5500, noTarget));
+  assert.equal(policy.step(tick(6499, noTarget)).idle, false);
+  assert.equal(policy.step(tick(6500, noTarget)).idle, true);
+});
+
+test("hidden-tab gap cannot age a prior no-target countdown into immediate idle", () => {
+  const policy = new ReflexPolicy();
+  policy.step(tick(0));
+  policy.step(tick(250));
+  const noTarget = base(); noTarget.attention_target = { choice: "none", confidence: 0.9 };
+  policy.step(tick(500, noTarget));
+  assert.equal(policy.step(tick(3000, noTarget)).idle, false);
+  assert.equal(policy.step(tick(10_000, noTarget)).idle, false);
+  policy.step(tick(11_000, noTarget));
+  policy.step(tick(12_000, noTarget));
+  assert.equal(policy.step(tick(12_999, noTarget)).idle, false);
+  assert.equal(policy.step(tick(13_000, noTarget)).idle, true);
 });

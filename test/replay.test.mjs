@@ -5,9 +5,9 @@ import { replayScenes } from "../scripts/replay_scenes.mjs";
 
 const corpus = await readFile(new URL("../fixtures/replay_scenes.jsonl", import.meta.url), "utf8");
 
-test("30 self-authored scenes lock gaze, nod, turn, stale, and ignored behavior", () => {
+test("43 self-authored ticks lock gaze, nod, turn, stale, and ignored behavior", () => {
   const report = replayScenes(corpus);
-  assert.deepEqual(report, { rows: 30, scenes: 3, mismatches: [] });
+  assert.deepEqual(report, { rows: 43, scenes: 4, mismatches: [] });
 });
 
 test("replay reports policy drift rather than regenerating golden expectations", () => {

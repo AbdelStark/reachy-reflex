@@ -6,6 +6,7 @@
 {"schema":"reflex.scene@1","scene":"gaze_hysteresis","ms":1250,"people":[["p2",15]],"target":"none","expect":{"gaze":"p2","nod":false,"idle":false,"events":[]}}
 {"schema":"reflex.scene@1","scene":"gaze_hysteresis","ms":1500,"people":[["p2",15]],"target":"none","expect":{"gaze":"p2","nod":false,"idle":false,"events":[]}}
 {"schema":"reflex.scene@1","scene":"gaze_hysteresis","ms":2000,"people":[["p2",15]],"target":"none","expect":{"gaze":"p2","nod":false,"idle":false,"events":[]}}
+{"schema":"reflex.scene@1","scene":"gaze_hysteresis","ms":3000,"people":[["p2",15]],"target":"none","expect":{"gaze":"p2","nod":false,"idle":false,"events":[]}}
 {"schema":"reflex.scene@1","scene":"gaze_hysteresis","ms":4000,"people":[["p2",15]],"target":"none","expect":{"gaze":"p2","nod":false,"idle":false,"events":[]}}
 {"schema":"reflex.scene@1","scene":"gaze_hysteresis","ms":4250,"people":[["p2",15]],"target":"none","expect":{"gaze":"none","nod":false,"idle":true,"events":[]}}
 {"schema":"reflex.scene@1","scene":"address_nod_turn","ms":0,"people":[["p1",-20]],"target":"p1","speaker":"p1","a":{"addressed":0.8,"ack":0.8},"expect":{"gaze":"p1","nod":true,"idle":false,"events":["user_addressed"]}}
@@ -28,3 +29,15 @@
 {"schema":"reflex.scene@1","scene":"stale_ignored","ms":23000,"people":[["p1",-20]],"target":"p1","a":{"ignored":0.8},"expect":{"gaze":"p1","nod":false,"idle":false,"events":[]}}
 {"schema":"reflex.scene@1","scene":"stale_ignored","ms":23250,"people":[["p1",-20]],"target":"p1","a":{"addressed":0.5,"ignored":0.8},"expect":{"gaze":"p1","nod":false,"idle":false,"events":[]}}
 {"schema":"reflex.scene@1","scene":"stale_ignored","ms":44000,"people":[["p1",-20]],"target":"p1","a":{"ignored":0.8},"expect":{"gaze":"p1","nod":false,"idle":false,"events":[]}}
+{"schema":"reflex.scene@1","scene":"stale_target","ms":0,"people":[["p1",-20]],"target":"p1","expect":{"gaze":"none","nod":false,"idle":false,"events":[]}}
+{"schema":"reflex.scene@1","scene":"stale_target","ms":250,"people":[["p1",-20]],"target":"p1","stale":true,"expect":{"gaze":"none","nod":false,"idle":false,"events":[]}}
+{"schema":"reflex.scene@1","scene":"stale_target","ms":500,"people":[["p1",-20]],"target":"p1","expect":{"gaze":"none","nod":false,"idle":false,"events":[]}}
+{"schema":"reflex.scene@1","scene":"stale_target","ms":750,"people":[["p1",-20]],"target":"p1","expect":{"gaze":"p1","nod":false,"idle":false,"events":["attention"]}}
+{"schema":"reflex.scene@1","scene":"stale_target","ms":1000,"people":[["p1",-20]],"target":"none","expect":{"gaze":"p1","nod":false,"idle":false,"events":[]}}
+{"schema":"reflex.scene@1","scene":"stale_target","ms":2000,"people":[["p1",-20]],"target":"none","expect":{"gaze":"p1","nod":false,"idle":false,"events":[]}}
+{"schema":"reflex.scene@1","scene":"stale_target","ms":2200,"people":[["p1",-20]],"target":"none","stale":true,"expect":{"gaze":"p1","nod":false,"idle":false,"events":[]}}
+{"schema":"reflex.scene@1","scene":"stale_target","ms":2500,"people":[["p1",-20]],"target":"none","expect":{"gaze":"p1","nod":false,"idle":false,"events":[]}}
+{"schema":"reflex.scene@1","scene":"stale_target","ms":3500,"people":[["p1",-20]],"target":"none","expect":{"gaze":"p1","nod":false,"idle":false,"events":[]}}
+{"schema":"reflex.scene@1","scene":"stale_target","ms":4500,"people":[["p1",-20]],"target":"none","expect":{"gaze":"p1","nod":false,"idle":false,"events":[]}}
+{"schema":"reflex.scene@1","scene":"stale_target","ms":5499,"people":[["p1",-20]],"target":"none","expect":{"gaze":"p1","nod":false,"idle":false,"events":[]}}
+{"schema":"reflex.scene@1","scene":"stale_target","ms":5500,"people":[["p1",-20]],"target":"none","expect":{"gaze":"none","nod":false,"idle":true,"events":[]}}

@@ -320,8 +320,12 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
     lastVideoTime = video.currentTime;
     try {
       const now = performance.now();
-      perception.acceptFaces(detector.detect(video, now), now);
+      const recycled = perception.acceptFaces(detector.detect(video, now), now);
       lastFrameAtMs = now;
+      if (recycled) {
+        invalidateJudgment();
+        q<HTMLElement>("#status").textContent = "Face label recycled; waiting for a fresh judgment before motion.";
+      }
       q<HTMLElement>("#video-fallback").hidden = true;
     }
     catch { q<HTMLElement>("#status").textContent = "Face detection failed; motion paused."; motionEpoch++; invalidateJudgment(); motionToggle.checked = false; motion?.setEnabled(false); }

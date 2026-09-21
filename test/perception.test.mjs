@@ -24,6 +24,29 @@ test("session-only IDs remain stable across small movements and recycle after ex
   assert.equal(tracker.update([a], 60_301)[0].id, "p1");
 });
 
+test("nine retired IDs cannot hide a newly detected face for a full minute", () => {
+  const state = new PerceptionState();
+  const original = Array.from({ length: 9 }, (_, index) => ({ x: index * 0.105, y: 0.2, width: 0.08, height: 0.3 }));
+  const newcomer = { x: 0.95, y: 0.2, width: 0.04, height: 0.3 };
+  assert.equal(state.acceptFaces(original, 0), false);
+  assert.equal(state.snapshot(0).people.length, 9);
+  assert.equal(state.acceptFaces([...original.slice(1), newcomer], 100), true);
+  const people = state.snapshot(100).people;
+  assert.equal(people.length, 9);
+  assert.equal(people.at(-1)?.id, "p1");
+  assert.deepEqual(people.slice(0, 8).map((person) => person.id), ["p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9"]);
+});
+
+test("a truncated frame cannot recycle a label that may still be visible", () => {
+  const tracker = new FaceTracker();
+  const original = Array.from({ length: 9 }, (_, index) => ({ x: index * 0.105, y: 0.2, width: 0.08, height: 0.3 }));
+  const newcomer = { x: 0.95, y: 0.2, width: 0.04, height: 0.3 };
+  tracker.update(original, 0);
+  const people = tracker.update([...original.slice(1), newcomer, original[0]], 100);
+  assert.equal(people.length, 8);
+  assert.equal(tracker.identityRevision, 0);
+});
+
 test("missing video frames expire position observations and reset clears all tracks", () => {
   const state = new PerceptionState();
   state.acceptFaces([a], 100);

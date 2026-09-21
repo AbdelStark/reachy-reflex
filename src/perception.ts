@@ -16,12 +16,14 @@ export function overlap(a: FaceBox, b: FaceBox): number {
   return Math.max(0, Math.min(1, intersection / (a.width * a.height + b.width * b.height - intersection)));
 }
 
-/** Session-only IoU tracker. IDs are never identities and expire after 60 s. */
+/** Session-only IoU tracker. IDs are labels, never identities. */
 export class FaceTracker {
   private tracks: Track[] = [];
+  private revision = 0;
   constructor(private readonly horizontalFovDeg = 60) {
     if (!Number.isFinite(horizontalFovDeg) || horizontalFovDeg <= 0 || horizontalFovDeg > 180) throw new RangeError("invalid camera field of view");
   }
+  get identityRevision(): number { return this.revision; }
   update(boxes: readonly FaceBox[], nowMs: number): PersonObservation[] {
     if (!Number.isFinite(nowMs) || nowMs < 0) throw new RangeError("invalid timestamp");
     if (boxes.some((box) => !validBox(box))) throw new RangeError("invalid normalized face box");
@@ -42,8 +44,16 @@ export class FaceTracker {
       let id = assigned.get(index);
       if (!id) {
         const free = Array.from({ length: 9 }, (_, index) => `p${index + 1}`).find((candidate) => !used.has(candidate) && !this.tracks.some((track) => track.id === candidate));
-        if (!free) continue;
-        id = free;
+        if (free) id = free;
+        else if (boxes.length <= 9) {
+          // Every label is reserved, but a previously seen face is absent from
+          // this within-cap frame. Recycle only an unmatched label and force a
+          // fresh model judgment; an in-flight answer may refer to its old face.
+          const retired = this.tracks.filter((track) => !used.has(track.id))
+            .sort((left, right) => left.seenAtMs - right.seenAtMs || left.id.localeCompare(right.id))[0];
+          if (retired) { id = retired.id; this.revision++; }
+        }
+        if (!id) continue;
         used.add(id);
       }
       next.push({ id, box, seenAtMs: nowMs });
@@ -55,7 +65,7 @@ export class FaceTracker {
       faceHeightFraction: box.height,
     }));
   }
-  clear(): void { this.tracks = []; }
+  clear(): void { this.tracks = []; this.revision++; }
 }
 
 export class PerceptionState {
@@ -63,9 +73,12 @@ export class PerceptionState {
   private lastFrameAtMs = -Infinity;
   private readonly tracker: FaceTracker;
   constructor(horizontalFovDeg = 60) { this.tracker = new FaceTracker(horizontalFovDeg); }
-  acceptFaces(boxes: readonly FaceBox[], nowMs: number): void {
+  /** Return true when a label was recycled and pending judgments must be discarded. */
+  acceptFaces(boxes: readonly FaceBox[], nowMs: number): boolean {
+    const revision = this.tracker.identityRevision;
     this.people = this.tracker.update(boxes, nowMs);
     this.lastFrameAtMs = nowMs;
+    return this.tracker.identityRevision !== revision;
   }
   snapshot(nowMs: number): RoomObservation {
     if (!Number.isFinite(nowMs) || nowMs < 0) throw new RangeError("invalid timestamp");

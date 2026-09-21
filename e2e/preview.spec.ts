@@ -126,8 +126,12 @@ test("local robot-stream analyser reads synthetic audio without speaker output",
     const input = new RobotSoundInput(destination.stream);
     try {
       await input.start();
-      await new Promise((resolve) => setTimeout(resolve, 100));
-      return input.snapshot();
+      let reading = input.snapshot();
+      for (let attempt = 0; attempt < 40 && (!reading || reading.levelDbfs <= -60); attempt++) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        reading = input.snapshot();
+      }
+      return reading;
     } finally {
       input.stop();
       oscillator.stop();
@@ -355,5 +359,91 @@ test("slow Jev answers and their cached copies cannot move a fake robot", async 
   await page.waitForTimeout(400); // Cached copies must retain the original observation age.
   expect(await page.evaluate(() => (window as unknown as { fakeReflexMotion: { commands: unknown[] } }).fakeReflexMotion.commands)).toHaveLength(0);
   await expect.poll(() => page.evaluate(() => (window as unknown as { fakeReflexMotion: { commands: unknown[] } }).fakeReflexMotion.commands.length), { timeout: 5000 }).toBeGreaterThan(0);
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+});
+
+test("recycling a face label discards an in-flight judgment before robot motion", async ({ page }) => {
+  let blockOld = false;
+  let oldBlocked = false;
+  let freshBlocked = false;
+  let releaseOld: (() => void) | undefined;
+  let releaseFresh: (() => void) | undefined;
+  await page.route("http://127.0.0.1:8048/v1/systemone", async (route) => {
+    const headers = {
+      "Access-Control-Allow-Origin": "http://127.0.0.1:5173",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Content-Type": "application/json",
+    };
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers });
+    const { state } = route.request().postDataJSON();
+    const people = state.people as Array<{ id: string }>;
+    let model = "setup-fixture";
+    if (blockOld && !oldBlocked && people.length === 9) {
+      oldBlocked = true;
+      await new Promise<void>((resolve) => { releaseOld = resolve; });
+      model = "old-face-fixture";
+    } else if (oldBlocked && !freshBlocked && people.length === 9) {
+      freshBlocked = true;
+      await new Promise<void>((resolve) => { releaseFresh = resolve; });
+      model = "fresh-face-fixture";
+    }
+    const noul = (value: number) => ({ type: "noul", noul: value });
+    const answers = {
+      attention_target: { type: "choice", choice: people[0]?.id ?? "none", confidence: 0.9 },
+      addressed: noul(0.1), addressed_by_gaze: noul(0.1), wants_reply: noul(0.1),
+      pause_invites_ack: noul(0.1), being_ignored: noul(0.1), someone_leaving: noul(0.1),
+      someone_arriving: noul(0.1), turn_action: { type: "choice", choice: "keep_talking", confidence: 0.9 },
+      engagement: { type: "score", score: 2 }, speaker_mood: { type: "choice", choice: "neutral", confidence: 0.9 },
+      group_talking_to_each_other: noul(0.1), robot_named: noul(0.1), question_asked: noul(0.1),
+      laughter_moment: noul(0.1), silence_awkward: noul(0.1),
+    };
+    await route.fulfill({ status: 200, headers, body: JSON.stringify({ model, answers }) });
+  });
+  await page.goto("/?preview=1");
+  await page.evaluate(async () => {
+    window.dispatchEvent(new Event("pagehide"));
+    const original = Array.from({ length: 9 }, (_, index) => ({ x: index * 0.105, y: 0.2, width: 0.08, height: 0.3 }));
+    const fixture = { boxes: original, commands: [] as unknown[] };
+    (window as unknown as { faceRecycleFixture: typeof fixture }).faceRecycleFixture = fixture;
+    const canvas = document.createElement("canvas");
+    canvas.width = 320; canvas.height = 240;
+    const context = canvas.getContext("2d")!;
+    let shade = 0;
+    const draw = window.setInterval(() => { context.fillStyle = `rgb(${shade++ % 255},0,0)`; context.fillRect(0, 0, 320, 240); }, 50);
+    const stream = canvas.captureStream(30);
+    const host = {
+      reachy: {
+        state: "streaming",
+        setTarget(target: unknown) { fixture.commands.push(target); return true; },
+        gotoTarget(target: unknown) { fixture.commands.push(target); return true; },
+      },
+      media: { attachVideo(video: HTMLVideoElement) { video.srcObject = stream; void video.play(); return () => { clearInterval(draw); stream.getTracks().forEach((track) => track.stop()); }; }, robotStream: undefined },
+      onLeave: () => {},
+    };
+    const { mountApp } = await import("/src/embed.ts");
+    mountApp(host as never, async () => ({ detect() { return fixture.boxes; }, close() {} }));
+  });
+  await page.locator("#relay-token").fill("t".repeat(32));
+  await page.getByRole("button", { name: "Connect Jev relay" }).click();
+  await page.locator("#tracking-enable").check();
+  await expect(page.locator("#person-count")).toHaveText("9");
+  blockOld = true;
+  await page.locator("#motion-enable").check();
+  await expect.poll(() => oldBlocked).toBe(true);
+  await page.evaluate(() => {
+    const fixture = (window as unknown as { faceRecycleFixture: { boxes: Array<{ x: number; y: number; width: number; height: number }>; commands: unknown[] } }).faceRecycleFixture;
+    fixture.commands.length = 0;
+    // Retire p9 for a nearby box: the bearing shifts <8°, so the normal
+    // source/latest bearing gate alone would not reject the old answer.
+    fixture.boxes = [...fixture.boxes.slice(0, 8), { x: 0.95, y: 0.2, width: 0.04, height: 0.3 }];
+  });
+  await expect(page.locator("#status")).toContainText("Face label recycled");
+  releaseOld?.();
+  await expect.poll(() => freshBlocked).toBe(true);
+  expect(await page.evaluate(() => (window as unknown as { faceRecycleFixture: { commands: unknown[] } }).faceRecycleFixture.commands)).toHaveLength(0);
+  await expect(page.locator("#stream-note")).not.toContainText("old-face-fixture");
+  releaseFresh?.();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { faceRecycleFixture: { commands: unknown[] } }).faceRecycleFixture.commands.length), { timeout: 5_000 }).toBeGreaterThan(0);
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
 });

@@ -162,6 +162,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
   let busy = false;
   let lastVideoTime = -1;
   let lastFrameAtMs = -Infinity;
+  let perceptionUnavailable = false;
   let detectorEpoch = 0;
   let motionEpoch = 0;
   let traceEpoch = 0;
@@ -244,7 +245,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
         engine = new ReflexEngine(new JevClient({ ask: transport.ask.bind(transport) }));
         traceEpoch++;
         lastMotionSource = undefined;
-        motionToggle.disabled = !detector;
+        motionToggle.disabled = !detector || perceptionUnavailable;
         q<HTMLElement>("#status").textContent = "Relay configured. Face tracking or consented final text can trigger judgments; motion needs live video and explicit enablement.";
         q<HTMLInputElement>("#relay-token").value = "";
       } catch (error) {
@@ -288,6 +289,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
       if (!trackingToggle.checked) {
         detector?.close();
         detector = undefined;
+        perceptionUnavailable = false;
         perception.clear();
         lastFrameAtMs = -Infinity;
         lastVideoTime = -1;
@@ -302,12 +304,14 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
       void createFaceDetector().then((ready) => {
         if (!active || epoch !== detectorEpoch || !trackingToggle.checked) return ready.close();
         detector = ready;
+        perceptionUnavailable = false;
         invalidateJudgment();
         motionToggle.disabled = !engine;
         q<HTMLElement>("#status").textContent = "Face tracking ready. Connect the relay to start judgments.";
       }).catch(() => {
         if (epoch !== detectorEpoch) return;
         trackingToggle.checked = false;
+        perceptionUnavailable = false;
         q<HTMLElement>("#status").textContent = "Face detector unavailable; only consented final text can be judged. Motion is disabled.";
         motionToggle.disabled = true;
       });
@@ -320,19 +324,43 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
     lastVideoTime = video.currentTime;
     try {
       const now = performance.now();
+      const recovering = perceptionUnavailable;
       const recycled = perception.acceptFaces(detector.detect(video, now), now);
+      perceptionUnavailable = false;
+      if (recovering) motionToggle.disabled = !engine;
       lastFrameAtMs = now;
-      if (recycled) {
+      if (recycled || recovering) {
         invalidateJudgment();
-        q<HTMLElement>("#status").textContent = "Face label recycled; waiting for a fresh judgment before motion.";
+        q<HTMLElement>("#status").textContent = recycled
+          ? "Face label recycled; waiting for a fresh judgment before motion."
+          : "Face tracking recovered; motion stays off until re-enabled.";
       }
       q<HTMLElement>("#video-fallback").hidden = true;
     }
-    catch { q<HTMLElement>("#status").textContent = "Face detection failed; motion paused."; motionEpoch++; invalidateJudgment(); motionToggle.checked = false; motion?.setEnabled(false); }
+    catch (error) {
+      const firstFailure = !perceptionUnavailable;
+      perceptionUnavailable = true;
+      perception.clear();
+      lastFrameAtMs = -Infinity;
+      if (firstFailure) {
+        motionEpoch++;
+        invalidateJudgment();
+        motionToggle.checked = false;
+        motionToggle.disabled = true;
+        motion?.setEnabled(false);
+        panel.update({ gauges: [], stale: true });
+        q<HTMLElement>("#person-count").textContent = "0";
+        q<HTMLElement>("#decision").textContent = "Held";
+        q<HTMLElement>("#stream-note").textContent = "Camera evidence unavailable · motion off";
+      }
+      q<HTMLElement>("#status").textContent = error instanceof RangeError && error.message.startsWith("too many faces")
+        ? "More than nine faces detected; incomplete room state discarded and motion disarmed."
+        : "Face detection failed; room state discarded and motion disarmed.";
+    }
   }, 100);
 
   async function tick(): Promise<void> {
-    if (!active || busy || !engine || document.visibilityState !== "visible") return;
+    if (!active || busy || !engine || document.visibilityState !== "visible" || perceptionUnavailable) return;
     const now = performance.now();
     const recent = speechSharing || robotSpeechSharing ? transcripts.snapshot(now) : [];
     const audioOnly = !preview && !detector;

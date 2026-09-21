@@ -2,8 +2,9 @@
 
 ## Unreleased
 
+- Reject frames with more than nine detected faces instead of truncating the room; clear prior labels, pause judgments, disarm motion, and require a recovered scene plus explicit re-arm. Unit and fake-host browser tests cover the overflow and recovery path.
 - Pin the shared question-bank validator that rejects malformed/unknown question kinds before wire projection; test the 16-question and empty-room expansions against the installed package.
-- Recycle an unmatched face label when all nine labels are reserved but a within-cap frame has a newcomer; invalidate the prior policy/model epoch so an in-flight answer cannot follow the reused label. Do not recycle on truncated crowded frames.
+- Recycle an unmatched face label when all nine labels are reserved but a within-cap frame has a newcomer; invalidate the prior policy/model epoch so an in-flight answer cannot follow the reused label.
 - Version local traces as `reflex.tick@2` with explicit policy reset epochs and add a bounded offline replay command for exported judgments; tracing begins from a fresh policy state, while model and robot execution remain outside replay.
 - Fence in-flight judgments across observation/consent/motion context changes, reset policy hysteresis and the Jev cache, and require fresh evidence before resuming decisions.
 - Add a 30-tick self-authored synthetic policy replay corpus and CI gate for gaze, nod, turn, stale, and ignored transitions; reset the ignored timer on stale judgments or a two-second fresh-data gap so missing model evidence cannot age into a droop.

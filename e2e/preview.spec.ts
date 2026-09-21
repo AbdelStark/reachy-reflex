@@ -447,3 +447,82 @@ test("recycling a face label discards an in-flight judgment before robot motion"
   await expect.poll(() => page.evaluate(() => (window as unknown as { faceRecycleFixture: { commands: unknown[] } }).faceRecycleFixture.commands.length), { timeout: 5_000 }).toBeGreaterThan(0);
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
 });
+
+test("over-capacity face frames disarm motion until a fresh scene is explicitly re-armed", async ({ page }) => {
+  let jevCalls = 0;
+  await page.route("http://127.0.0.1:8048/v1/systemone", async (route) => {
+    const headers = {
+      "Access-Control-Allow-Origin": "http://127.0.0.1:5173",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Content-Type": "application/json",
+    };
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers });
+    jevCalls++;
+    const { questions } = route.request().postDataJSON() as { questions: Record<string, { type: string; criteria?: Record<string, null> }> };
+    const answers = Object.fromEntries(Object.entries(questions).map(([key, question]) => [key,
+      question.type === "choice" ? { type: "choice", choice: Object.keys(question.criteria ?? {})[0], confidence: 0.9 }
+        : question.type === "score" ? { type: "score", score: 2 } : { type: "noul", noul: 0.1 },
+    ]));
+    await route.fulfill({ status: 200, headers, body: JSON.stringify({ model: "fixture", answers }) });
+  });
+  await page.goto("/?preview=1");
+  await page.evaluate(async () => {
+    window.dispatchEvent(new Event("pagehide"));
+    const fixture = {
+      boxes: [{ x: 0.3, y: 0.2, width: 0.08, height: 0.3 }],
+      commands: [] as unknown[],
+    };
+    (window as unknown as { crowdFixture: typeof fixture }).crowdFixture = fixture;
+    const canvas = document.createElement("canvas");
+    canvas.width = 320; canvas.height = 240;
+    const context = canvas.getContext("2d")!;
+    let shade = 0;
+    const draw = window.setInterval(() => { context.fillStyle = `rgb(${shade++ % 255},0,0)`; context.fillRect(0, 0, 320, 240); }, 50);
+    const stream = canvas.captureStream(30);
+    const host = {
+      reachy: {
+        state: "streaming",
+        setTarget(target: unknown) { fixture.commands.push(target); return true; },
+        gotoTarget(target: unknown) { fixture.commands.push(target); return true; },
+      },
+      media: { attachVideo(video: HTMLVideoElement) { video.srcObject = stream; void video.play(); return () => { clearInterval(draw); stream.getTracks().forEach((track) => track.stop()); }; }, robotStream: undefined },
+      onLeave: () => {},
+    };
+    const { mountApp } = await import("/src/embed.ts");
+    mountApp(host as never, async () => ({ detect() { return fixture.boxes; }, close() {} }));
+  });
+  await page.locator("#relay-token").fill("t".repeat(32));
+  await page.getByRole("button", { name: "Connect Jev relay" }).click();
+  await page.locator("#tracking-enable").check();
+  await expect(page.locator("#person-count")).toHaveText("1");
+  await page.locator("#motion-enable").check();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { crowdFixture: { commands: unknown[] } }).crowdFixture.commands.length)).toBeGreaterThan(0);
+
+  await page.evaluate(() => {
+    const fixture = (window as unknown as { crowdFixture: { boxes: Array<{ x: number; y: number; width: number; height: number }> } }).crowdFixture;
+    fixture.boxes = Array.from({ length: 10 }, (_, index) => ({ x: index * 0.09, y: 0.2, width: 0.06, height: 0.3 }));
+  });
+  await expect(page.locator("#status")).toContainText("More than nine faces detected");
+  await expect(page.locator("#motion-enable")).not.toBeChecked();
+  await expect(page.locator("#motion-enable")).toBeDisabled();
+  await expect(page.locator("#person-count")).toHaveText("0");
+  await expect(page.locator("jev-panel").locator("jev-gauge")).toHaveCount(0);
+  const heldCount = await page.evaluate(() => (window as unknown as { crowdFixture: { commands: unknown[] } }).crowdFixture.commands.length);
+  const heldCalls = jevCalls;
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(() => (window as unknown as { crowdFixture: { commands: unknown[] } }).crowdFixture.commands.length)).toBe(heldCount);
+  expect(jevCalls).toBe(heldCalls);
+
+  await page.evaluate(() => {
+    const fixture = (window as unknown as { crowdFixture: { boxes: Array<{ x: number; y: number; width: number; height: number }> } }).crowdFixture;
+    fixture.boxes = [{ x: 0.3, y: 0.2, width: 0.08, height: 0.3 }];
+  });
+  await expect(page.locator("#status")).toContainText("Face tracking recovered");
+  await expect(page.locator("#motion-enable")).toBeEnabled();
+  await page.waitForTimeout(500);
+  expect(await page.evaluate(() => (window as unknown as { crowdFixture: { commands: unknown[] } }).crowdFixture.commands.length)).toBe(heldCount);
+  await page.locator("#motion-enable").check();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { crowdFixture: { commands: unknown[] } }).crowdFixture.commands.length)).toBeGreaterThan(heldCount);
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+});

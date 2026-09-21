@@ -37,14 +37,19 @@ test("nine retired IDs cannot hide a newly detected face for a full minute", () 
   assert.deepEqual(people.slice(0, 8).map((person) => person.id), ["p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9"]);
 });
 
-test("a truncated frame cannot recycle a label that may still be visible", () => {
+test("an over-capacity frame cannot silently truncate people or retain prior perception", () => {
   const tracker = new FaceTracker();
+  const state = new PerceptionState();
   const original = Array.from({ length: 9 }, (_, index) => ({ x: index * 0.105, y: 0.2, width: 0.08, height: 0.3 }));
   const newcomer = { x: 0.95, y: 0.2, width: 0.04, height: 0.3 };
   tracker.update(original, 0);
-  const people = tracker.update([...original.slice(1), newcomer, original[0]], 100);
-  assert.equal(people.length, 8);
+  state.acceptFaces(original, 0);
+  assert.throws(() => tracker.update([...original.slice(1), newcomer, original[0]], 100), /too many faces/);
+  assert.throws(() => state.acceptFaces([...original.slice(1), newcomer, original[0]], 100), /too many faces/);
   assert.equal(tracker.identityRevision, 0);
+  assert.deepEqual(state.snapshot(100), { people: [] });
+  assert.deepEqual(state.acceptFaces(original, 200), false);
+  assert.deepEqual(state.snapshot(200).people.map((person) => person.id), ["p1", "p2", "p3", "p4", "p5", "p6", "p7", "p8", "p9"]);
 });
 
 test("missing video frames expire position observations and reset clears all tracks", () => {

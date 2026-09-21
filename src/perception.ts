@@ -27,8 +27,9 @@ export class FaceTracker {
   update(boxes: readonly FaceBox[], nowMs: number): PersonObservation[] {
     if (!Number.isFinite(nowMs) || nowMs < 0) throw new RangeError("invalid timestamp");
     if (boxes.some((box) => !validBox(box))) throw new RangeError("invalid normalized face box");
+    if (boxes.length > 9) throw new RangeError("too many faces for nine-label room state");
     this.tracks = this.tracks.filter((track) => nowMs >= track.seenAtMs && nowMs - track.seenAtMs < 60_000);
-    const detections = boxes.slice(0, 9);
+    const detections = boxes;
     const matches = this.tracks.flatMap((track) => detections.map((box, index) => ({ id: track.id, index, iou: overlap(track.box, box) })))
       .filter(({ iou }) => iou >= 0.3)
       .sort((a, b) => b.iou - a.iou);
@@ -45,7 +46,7 @@ export class FaceTracker {
       if (!id) {
         const free = Array.from({ length: 9 }, (_, index) => `p${index + 1}`).find((candidate) => !used.has(candidate) && !this.tracks.some((track) => track.id === candidate));
         if (free) id = free;
-        else if (boxes.length <= 9) {
+        else {
           // Every label is reserved, but a previously seen face is absent from
           // this within-cap frame. Recycle only an unmatched label and force a
           // fresh model judgment; an in-flight answer may refer to its old face.
@@ -76,9 +77,14 @@ export class PerceptionState {
   /** Return true when a label was recycled and pending judgments must be discarded. */
   acceptFaces(boxes: readonly FaceBox[], nowMs: number): boolean {
     const revision = this.tracker.identityRevision;
-    this.people = this.tracker.update(boxes, nowMs);
-    this.lastFrameAtMs = nowMs;
-    return this.tracker.identityRevision !== revision;
+    try {
+      this.people = this.tracker.update(boxes, nowMs);
+      this.lastFrameAtMs = nowMs;
+      return this.tracker.identityRevision !== revision;
+    } catch (error) {
+      this.clear();
+      throw error;
+    }
   }
   snapshot(nowMs: number): RoomObservation {
     if (!Number.isFinite(nowMs) || nowMs < 0) throw new RangeError("invalid timestamp");

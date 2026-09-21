@@ -16,6 +16,10 @@ tags:
 
 A social-attention layer for Reachy Mini. Sixteen typed Jev judgments describe the room; deterministic policy chooses gaze, nods, posture, and local control events. Jev never sends motor commands directly.
 
+![Reflex browser fixture preview: room view, one simulated person, and sixteen typed judgment gauges](docs/fixture-preview.png)
+
+_Browser fixture preview with one simulated person and deterministic answers. No camera, Jev call, or robot motion was used to make this image._
+
 This is a development preview, not a hardware-tested release. The browser app now has the Reachy Mini host shell, WebRTC camera attachment, local face-box detection, opt-in robot-stream sound-energy hints, opt-in local robot-stream ASR, an opt-in browser-device transcription path, a 16-signal panel, an authenticated local Jev relay, an opt-in bounded motion adapter, and an opt-in text-free session trace. Face detection, robot audio, browser microphone access inside the host, and motion have **not** been validated on a real robot. Robust VAD, direction-of-arrival, speaker attribution, Conversation App event integration, hosted relay deployment, and calibration are still missing. No attention accuracy, end-to-end latency, cost, or human-preference result is claimed.
 
 ## Run and verify

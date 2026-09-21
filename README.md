@@ -2,7 +2,7 @@
 
 An attention and turn-taking layer for Reachy Mini. Sixteen typed Jev judgments describe the room; deterministic policy decides gaze, nods, posture, and local control events. The language model never commands motors directly.
 
-The current release is a tested offline decision core, not yet a browser or on-robot app. Camera/microphone perception, Jev transport, Reachy motion, the live panel, and Conversation App integration are still being built. No presence, latency, cost, or human-agreement target has been measured.
+The current release is a tested decision core with an SDK-shaped Jev transport boundary, not yet a browser or on-robot app. Camera/microphone perception, Reachy motion, the live panel, and Conversation App integration are still being built. No live Jev run, presence, latency, cost, or human-agreement target has been measured.
 
 ## Decision loop
 

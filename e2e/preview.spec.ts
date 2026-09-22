@@ -319,6 +319,49 @@ test("connected app judges consented final text without a camera and never comma
   await expect(page.locator("jev-panel").locator("jev-gauge")).toHaveCount(0);
 });
 
+test("relay 429 pauses connected judgments without repeat requests or motion", async ({ page }) => {
+  let requests = 0;
+  await page.route("http://127.0.0.1:8048/v1/systemone", async (route) => {
+    const headers = {
+      "Access-Control-Allow-Origin": "http://127.0.0.1:5173",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Content-Type": "application/json",
+    };
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers });
+    requests++;
+    await route.fulfill({ status: 429, headers, body: '{"error":"upstream_attempt_limit"}' });
+  });
+  await page.addInitScript(() => {
+    class FakeRecognition {
+      onresult: ((event: { resultIndex: number; results: { isFinal: boolean; 0: { transcript: string } }[] }) => void) | null = null;
+      start() { (window as unknown as { fakeRecognition: FakeRecognition }).fakeRecognition = this; }
+      abort() {}
+      emit(text: string) { this.onresult?.({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: text } }] }); }
+    }
+    (window as unknown as { SpeechRecognition: typeof FakeRecognition }).SpeechRecognition = FakeRecognition;
+  });
+  await page.goto("/?preview=1");
+  await page.evaluate(async () => {
+    window.dispatchEvent(new Event("pagehide"));
+    const commands: unknown[] = [];
+    (window as unknown as { robotCommands: unknown[] }).robotCommands = commands;
+    const robot = { state: "streaming", setTarget(target: unknown) { commands.push(target); return true; }, gotoTarget(target: unknown) { commands.push(target); return true; } };
+    const { mountApp } = await import("/src/embed.ts");
+    mountApp({ reachy: robot, media: { attachVideo: () => () => {}, robotStream: undefined }, onLeave: () => {} } as never);
+  });
+  await page.locator("#relay-token").fill("t".repeat(32));
+  await page.getByRole("button", { name: "Connect Jev relay" }).click();
+  await page.locator("#speech-consent").check();
+  await page.getByRole("button", { name: "Start transcription" }).click();
+  await page.evaluate(() => (window as unknown as { fakeRecognition: { emit(text: string): void } }).fakeRecognition.emit("Reachy, are you listening?"));
+  await expect(page.locator("#status")).toContainText("Relay request limit reached; judgments paused");
+  await expect(page.locator("#decision")).toHaveText("Stale · idle");
+  await page.waitForTimeout(800);
+  expect(requests).toBe(1);
+  expect(await page.evaluate(() => (window as unknown as { robotCommands: unknown[] }).robotCommands)).toEqual([]);
+});
+
 test("local control events require explicit opt-in and fresh camera evidence", async ({ page }) => {
   const published: Array<Record<string, unknown>> = [];
   let slowNext = false;

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Treat relay HTTP 429 as non-retryable, pause the browser judgment loop until an operator reconnects, and show an actionable status while motion remains held; fake-relay tests cover the limit without model or robot calls.
 - Cap valid upstream model-call attempts per relay process (300 by default, configurable), reserving before the call and counting failures; minute-window resets do not renew the cap. This is not a billing or token budget.
 - Pin the shared `reachy-jev` update that bounds recent transcript state to 200 UTF-16 units without splitting an emoji; shared cross-language fixtures and this app's synthetic suite pass. No live transcription or model behavior is inferred.
 - Validate the session trace's exported policy vocabulary before retaining a row: free-form event/answer labels, non-finite judgments or targets, and malformed speaking evidence fail closed. Keep extra response fields out of the projected JSONL; this is a recorder boundary, not tamper-evident provenance.

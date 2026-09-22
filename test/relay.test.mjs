@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { buildRoomState, toTypeSafeQuestions } from "reachy-jev";
+import { buildRoomState, JevClient, toTypeSafeQuestions } from "reachy-jev";
 import { createRelayServer } from "../server/relay.mjs";
 import { REFLEX_BANK } from "../dist/bank.js";
-import { RelayTransport } from "../dist/relay.js";
+import { RelayError, RelayTransport, isRetryableRelayError } from "../dist/relay.js";
 import WebSocket from "ws";
 
 const token = "r".repeat(40);
@@ -18,6 +18,29 @@ test("browser relay URL and credentials are constrained", () => {
   const remote = new RelayTransport("https://relay.example.test", token);
   assert.equal(remote.localEventBridge, false);
   assert.rejects(() => remote.publishEvent({ type: "attention", person: "p1" }), /numeric loopback/);
+});
+
+test("relay 429 is visible as a limit and is not retried by the Jev client", async () => {
+  let calls = 0;
+  let sleeps = 0;
+  const transport = new RelayTransport("http://127.0.0.1:8048", token, async () => {
+    calls++;
+    return new Response('{"error":"upstream_attempt_limit"}', { status: 429 });
+  });
+  const client = new JevClient({
+    ask: transport.ask.bind(transport),
+    isTransient: isRetryableRelayError,
+    sleep: async () => { sleeps++; },
+  });
+  await assert.rejects(() => client.ask(body.state, body.questions), (error) => {
+    assert.equal(error instanceof RelayError, true);
+    assert.equal(error.name, "RelayLimitError");
+    assert.equal(error.status, 429);
+    return true;
+  });
+  assert.equal(calls, 1);
+  assert.equal(sleeps, 0);
+  assert.equal(isRetryableRelayError(new RelayError(503)), true);
 });
 
 test("local relay authenticates, checks origin and shape, and forwards exactly one call", async () => {

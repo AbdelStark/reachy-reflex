@@ -6,7 +6,7 @@ import { ReflexEngine } from "./engine.js";
 import { fixtureAsk } from "./fixture.js";
 import { RobotMotionController, motionEvidenceCurrent, type MotionEvidence } from "./motion.js";
 import { PerceptionState } from "./perception.js";
-import { RelayError, RelayTransport } from "./relay.js";
+import { RelayError, RelayTransport, isRetryableRelayError } from "./relay.js";
 import { VideoFaceDetector } from "./vision.js";
 import { BrowserSpeechInput, RecentTranscripts, browserRecognition } from "./speech.js";
 import { RobotSoundInput } from "./sound.js";
@@ -193,6 +193,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
   let detector: FaceDetectorPort | undefined;
   let engine: ReflexEngine | undefined = preview ? new ReflexEngine(new JevClient({ ask: fixtureAsk })) : undefined;
   let relayTransport: RelayTransport | undefined;
+  let relayLimited = false;
   let speakingState: boolean | null = null;
   let speakingEpoch = 0;
   let speakingPollBusy = false;
@@ -327,8 +328,9 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
       event.preventDefault();
       try {
         const transport = new RelayTransport(q<HTMLInputElement>("#relay-url").value, q<HTMLInputElement>("#relay-token").value);
-        engine = new ReflexEngine(new JevClient({ ask: usageMeter.wrap(transport.ask.bind(transport)) }));
+        engine = new ReflexEngine(new JevClient({ ask: usageMeter.wrap(transport.ask.bind(transport)), isTransient: isRetryableRelayError }));
         relayTransport = transport;
+        relayLimited = false;
         speakingEpoch++;
         setSpeakingState(null, "Speaking-state feed needs a fresh assertion from a separate local app.");
         speakingToggle.disabled = !transport.localSpeakingBridge;
@@ -456,7 +458,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
   }, 100);
 
   async function tick(): Promise<void> {
-    if (!active || busy || !engine || document.visibilityState !== "visible" || perceptionUnavailable) return;
+    if (!active || busy || !engine || relayLimited || document.visibilityState !== "visible" || perceptionUnavailable) return;
     const now = performance.now();
     const recent = speechSharing || robotSpeechSharing ? transcripts.snapshot(now) : [];
     const audioOnly = !preview && !detector;
@@ -506,7 +508,10 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
       q<HTMLElement>("#tick-count").textContent = String(ticks);
       q<HTMLElement>("#decision").textContent = result.stale ? "Stale · idle" : audioOnly ? "Audio only · motion off" : result.output.gaze === "none" ? "Scanning" : `Looking at ${result.output.gaze}`;
       q<HTMLElement>("#stream-note").textContent = preview ? "Deterministic fixture answers" : result.stale ? "Jev unavailable · no new motion" : `${result.model ?? "Model unknown"} · ${Math.round(result.latencyMs ?? 0)} ms`;
-      if (result.error) q<HTMLElement>("#status").textContent = `Judgment unavailable (${result.error}); motion paused.`;
+      if (result.error === "RelayLimitError") {
+        relayLimited = true;
+        q<HTMLElement>("#status").textContent = "Relay request limit reached; judgments paused. Wait for the rate window, or restart/reconfigure the local attempt cap, then reconnect. Motion paused.";
+      } else if (result.error) q<HTMLElement>("#status").textContent = `Judgment unavailable (${result.error}); motion paused.`;
       const eventReady = Boolean(host && relayTransport && eventsToggle.checked && !audioOnly && !result.stale && detector
         && trackingVersion === detectorEpoch && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
         && lastEventSource && motionEvidenceCurrent({ ...lastEventSource, deliveredAtMs,

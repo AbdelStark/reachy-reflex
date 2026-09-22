@@ -2,7 +2,16 @@ import type { JevResponse } from "reachy-jev";
 import type { ReflexEvent } from "./policy.js";
 
 export class RelayError extends Error {
-  constructor(readonly status: number) { super(`Jev relay returned HTTP ${status}`); }
+  constructor(readonly status: number) {
+    super(`Jev relay returned HTTP ${status}`);
+    this.name = status === 429 ? "RelayLimitError" : "RelayError";
+  }
+}
+
+/** A relay 429 may be a session cap; retrying it only burns another request. */
+export function isRetryableRelayError(error: unknown): boolean {
+  if (error instanceof RelayError) return error.status === 408 || error.status >= 500;
+  return error instanceof Error && /timeout|network|fetch failed|failed to fetch/i.test(error.message);
 }
 
 /** Browser-side transport; TypeSafe credentials never enter this bundle. */

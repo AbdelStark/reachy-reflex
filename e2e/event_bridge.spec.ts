@@ -7,6 +7,7 @@ const subscriberToken = "s".repeat(40);
 const speakingWriterToken = "w".repeat(40);
 
 test("a synthetic camera judgment crosses the real loopback relay to a read-only subscriber", async ({ page }) => {
+  test.setTimeout(45_000); // Several short browser/relay waits plus bounded cleanup on a busy CI host.
   let modelCalls = 0;
   const server = createRelayServer({
     token: publisherToken,
@@ -101,14 +102,23 @@ test("a synthetic camera judgment crosses the real loopback relay to a read-only
     expect(await page.evaluate(() => (window as unknown as { integrationMotionCommands: unknown[] }).integrationMotionCommands)).toEqual([]);
 
     await page.locator("#speaking-enable").check();
-    const speakingUpdate = await fetch(`http://127.0.0.1:${address.port}/v1/speaking`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${speakingWriterToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ schema: "reflex.speaking@1", session: "synthetic_session", seq: 1, speaking: true }),
-    });
-    expect(speakingUpdate.status).toBe(202);
-    await expect(page.locator("#speaking-status")).toContainText("may be speaking");
-    await expect.poll(() => received.some((message) => (message.event as { type?: string }).type === "yield")).toBe(true);
+    let speakingSequence = 0;
+    const refreshSpeaking = async () => {
+      const update = await fetch(`http://127.0.0.1:${address.port}/v1/speaking`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${speakingWriterToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ schema: "reflex.speaking@1", session: "synthetic_session", seq: ++speakingSequence, speaking: true }),
+      });
+      expect(update.status).toBe(202);
+    };
+    await expect.poll(async () => {
+      await refreshSpeaking();
+      return page.locator("#speaking-status").textContent();
+    }).toContain("may be speaking");
+    await expect.poll(async () => {
+      await refreshSpeaking();
+      return received.some((message) => (message.event as { type?: string }).type === "yield");
+    }).toBe(true);
     expect(received.find((message) => (message.event as { type?: string }).type === "yield")?.schema).toBe("reflex.event@1");
     expect(await page.evaluate(() => (window as unknown as { integrationMotionCommands: unknown[] }).integrationMotionCommands)).toEqual([]);
     await expect(page.locator("#speaking-status")).toContainText("missing or expired", { timeout: 5_000 });
@@ -118,10 +128,16 @@ test("a synthetic camera judgment crosses the real loopback relay to a read-only
   } finally {
     await page.evaluate(() => window.dispatchEvent(new Event("pagehide"))).catch(() => {});
     if (subscriber.readyState === WebSocket.OPEN) {
-      const closed = new Promise<void>((resolve) => subscriber.once("close", resolve));
+      const closed = new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => { subscriber.terminate(); resolve(); }, 1_000);
+        subscriber.once("close", () => { clearTimeout(timeout); resolve(); });
+      });
       subscriber.close();
       await closed;
     } else subscriber.terminate();
-    await new Promise<void>((resolve) => server.close(resolve));
+    await new Promise<void>((resolve) => {
+      server.close(resolve);
+      server.closeAllConnections();
+    });
   }
 });

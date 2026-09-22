@@ -62,6 +62,7 @@ test("wrong answer kind never actuates from model data", async () => {
   const engine = new ReflexEngine(new JevClient({ ask: async () => ({ answers: wrong }) }));
   const result = await engine.tick(observation, 0);
   assert.equal(result.stale, true);
+  assert.equal(result.requestFailed, true);
   assert.equal(result.output.idle, true);
   assert.equal(result.output.events.length, 0);
   assert.deepEqual(result.panel, { gauges: [], stale: true });
@@ -81,8 +82,32 @@ test("network failure leaves robot in idle rather than producing a new motion de
   const engine = new ReflexEngine(new JevClient({ ask: async () => { throw new Error("unauthorized"); } }));
   const result = await engine.tick(observation, 0);
   assert.equal(result.stale, true);
+  assert.equal(result.requestFailed, true);
   assert.equal(result.output.idle, true);
   assert.deepEqual(result.panel, { gauges: [], stale: true });
+});
+
+test("a stale cached answer still signals a failed relay request for loop backoff", async () => {
+  let now = 0;
+  let calls = 0;
+  const client = new JevClient({
+    now: () => now,
+    maxAgeMs: 0,
+    sleep: async () => {},
+    ask: async () => {
+      calls++;
+      if (calls > 1) throw new Error("network failure");
+      return { model: "fixture", answers: answers() };
+    },
+  });
+  const engine = new ReflexEngine(client);
+  assert.equal((await engine.tick(observation, now)).requestFailed, false);
+  now = 2_000;
+  const stale = await engine.tick(observation, now);
+  assert.equal(stale.stale, true);
+  assert.equal(stale.requestFailed, true);
+  assert.equal(stale.output.events.length, 0);
+  assert.equal(calls, 3);
 });
 
 test("ambiguous person IDs invalidate evidence before any model call or motion", async () => {
@@ -94,6 +119,7 @@ test("ambiguous person IDs invalidate evidence before any model call or motion",
   await engine.tick(observation, 0);
   const invalid = await engine.tick({ people: [{ id: "p1" }, { id: "p1" }] }, 250);
   assert.equal(invalid.stale, true);
+  assert.equal(invalid.requestFailed, undefined);
   assert.equal(invalid.output.idle, true);
   assert.equal(invalid.output.gaze, "none");
   assert.deepEqual(invalid.panel, { gauges: [], stale: true });

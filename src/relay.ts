@@ -4,7 +4,9 @@ import type { ReflexEvent } from "./policy.js";
 export class RelayError extends Error {
   constructor(readonly status: number) {
     super(`Jev relay returned HTTP ${status}`);
-    this.name = status === 429 ? "RelayLimitError" : "RelayError";
+    this.name = status === 429 ? "RelayLimitError"
+      : status >= 400 && status < 500 && status !== 408 ? "RelayRequestRejectedError"
+        : "RelayError";
   }
 }
 

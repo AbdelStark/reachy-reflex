@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -319,19 +319,7 @@ test("connected app judges consented final text without a camera and never comma
   await expect(page.locator("jev-panel").locator("jev-gauge")).toHaveCount(0);
 });
 
-test("relay 429 pauses connected judgments without repeat requests or motion", async ({ page }) => {
-  let requests = 0;
-  await page.route("http://127.0.0.1:8048/v1/systemone", async (route) => {
-    const headers = {
-      "Access-Control-Allow-Origin": "http://127.0.0.1:5173",
-      "Access-Control-Allow-Headers": "Authorization, Content-Type",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Content-Type": "application/json",
-    };
-    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers });
-    requests++;
-    await route.fulfill({ status: 429, headers, body: '{"error":"upstream_attempt_limit"}' });
-  });
+async function mountRelayFailureFixture(page: Page): Promise<void> {
   await page.addInitScript(() => {
     class FakeRecognition {
       onresult: ((event: { resultIndex: number; results: { isFinal: boolean; 0: { transcript: string } }[] }) => void) | null = null;
@@ -355,10 +343,67 @@ test("relay 429 pauses connected judgments without repeat requests or motion", a
   await page.locator("#speech-consent").check();
   await page.getByRole("button", { name: "Start transcription" }).click();
   await page.evaluate(() => (window as unknown as { fakeRecognition: { emit(text: string): void } }).fakeRecognition.emit("Reachy, are you listening?"));
-  await expect(page.locator("#status")).toContainText("Relay request limit reached; judgments paused");
-  await expect(page.locator("#decision")).toHaveText("Stale · idle");
+}
+
+for (const [status, expected] of [
+  [429, "Relay request limit reached; judgments paused"],
+  [401, "Relay rejected the request; judgments paused"],
+  [403, "Relay rejected the request; judgments paused"],
+  [404, "Relay rejected the request; judgments paused"],
+] as const) {
+  test(`relay ${status} pauses connected judgments without repeat requests or motion`, async ({ page }) => {
+    let requests = 0;
+    await page.route("http://127.0.0.1:8048/v1/systemone", async (route) => {
+      const headers = {
+        "Access-Control-Allow-Origin": "http://127.0.0.1:5173",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Content-Type": "application/json",
+      };
+      if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers });
+      requests++;
+      await route.fulfill({ status, headers, body: '{"error":"fixture"}' });
+    });
+    await mountRelayFailureFixture(page);
+    await expect(page.locator("#status")).toContainText(expected);
+    await expect(page.locator("#decision")).toHaveText("Stale · idle");
+    await page.waitForTimeout(800);
+    expect(requests).toBe(1);
+    expect(await page.evaluate(() => (window as unknown as { robotCommands: unknown[] }).robotCommands)).toEqual([]);
+  });
+}
+
+test("transient relay failure backs off before recovering the judgment loop", async ({ page }) => {
+  let requests = 0;
+  await page.route("http://127.0.0.1:8048/v1/systemone", async (route) => {
+    const headers = {
+      "Access-Control-Allow-Origin": "http://127.0.0.1:5173",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Content-Type": "application/json",
+    };
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers });
+    requests++;
+    if (requests <= 2) return route.fulfill({ status: 503, headers, body: '{"error":"fixture"}' });
+    const noul = (value: number) => ({ type: "noul", noul: value });
+    const answers = {
+      attention_target: { type: "choice", choice: "none", confidence: 0.99 },
+      addressed: noul(0.9), addressed_by_gaze: noul(0.05), wants_reply: noul(0.8),
+      pause_invites_ack: noul(0.1), being_ignored: noul(0.1), someone_leaving: noul(0.1),
+      someone_arriving: noul(0.1), turn_action: { type: "choice", choice: "keep_talking", confidence: 0.9 },
+      engagement: { type: "score", score: 0 }, speaker_mood: { type: "choice", choice: "neutral", confidence: 0.8 },
+      group_talking_to_each_other: noul(0.1), robot_named: noul(0.9), question_asked: noul(0.8),
+      laughter_moment: noul(0.1), silence_awkward: noul(0.1),
+    };
+    await route.fulfill({ status: 200, headers, body: JSON.stringify({ model: "fixture", answers }) });
+  });
+  await mountRelayFailureFixture(page);
+  await expect(page.locator("#status")).toContainText("retrying after 2s");
+  expect(requests).toBe(2); // The bounded Jev client retry is still allowed for 503.
   await page.waitForTimeout(800);
-  expect(requests).toBe(1);
+  expect(requests).toBe(2);
+  await expect(page.locator("#status")).toContainText("Relay recovered; fresh judgments resumed", { timeout: 5_000 });
+  expect(requests).toBe(3);
   expect(await page.evaluate(() => (window as unknown as { robotCommands: unknown[] }).robotCommands)).toEqual([]);
 });
 

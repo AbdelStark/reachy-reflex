@@ -193,7 +193,9 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
   let detector: FaceDetectorPort | undefined;
   let engine: ReflexEngine | undefined = preview ? new ReflexEngine(new JevClient({ ask: fixtureAsk })) : undefined;
   let relayTransport: RelayTransport | undefined;
-  let relayLimited = false;
+  let relayPaused = false;
+  let relayFailures = 0;
+  let relayRetryAfterMs = 0;
   let speakingState: boolean | null = null;
   let speakingEpoch = 0;
   let speakingPollBusy = false;
@@ -330,7 +332,9 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
         const transport = new RelayTransport(q<HTMLInputElement>("#relay-url").value, q<HTMLInputElement>("#relay-token").value);
         engine = new ReflexEngine(new JevClient({ ask: usageMeter.wrap(transport.ask.bind(transport)), isTransient: isRetryableRelayError }));
         relayTransport = transport;
-        relayLimited = false;
+        relayPaused = false;
+        relayFailures = 0;
+        relayRetryAfterMs = 0;
         speakingEpoch++;
         setSpeakingState(null, "Speaking-state feed needs a fresh assertion from a separate local app.");
         speakingToggle.disabled = !transport.localSpeakingBridge;
@@ -458,7 +462,8 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
   }, 100);
 
   async function tick(): Promise<void> {
-    if (!active || busy || !engine || relayLimited || document.visibilityState !== "visible" || perceptionUnavailable) return;
+    if (!active || busy || !engine || relayPaused || performance.now() < relayRetryAfterMs
+      || document.visibilityState !== "visible" || perceptionUnavailable) return;
     const now = performance.now();
     const recent = speechSharing || robotSpeechSharing ? transcripts.snapshot(now) : [];
     const audioOnly = !preview && !detector;
@@ -509,9 +514,25 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
       q<HTMLElement>("#decision").textContent = result.stale ? "Stale · idle" : audioOnly ? "Audio only · motion off" : result.output.gaze === "none" ? "Scanning" : `Looking at ${result.output.gaze}`;
       q<HTMLElement>("#stream-note").textContent = preview ? "Deterministic fixture answers" : result.stale ? "Jev unavailable · no new motion" : `${result.model ?? "Model unknown"} · ${Math.round(result.latencyMs ?? 0)} ms`;
       if (result.error === "RelayLimitError") {
-        relayLimited = true;
-        q<HTMLElement>("#status").textContent = "Relay request limit reached; judgments paused. Wait for the rate window, or restart/reconfigure the local attempt cap, then reconnect. Motion paused.";
-      } else if (result.error) q<HTMLElement>("#status").textContent = `Judgment unavailable (${result.error}); motion paused.`;
+        relayPaused = true;
+        q<HTMLElement>("#status").textContent = "Relay request limit reached; judgments paused. Let the relay recover or restart/reconfigure its process cap, then reconnect. Motion paused.";
+      } else if (result.error === "RelayRequestRejectedError") {
+        relayPaused = true;
+        q<HTMLElement>("#status").textContent = "Relay rejected the request; judgments paused. Check the URL, token, allowed origin, and app/relay version, then reconnect. Motion paused.";
+      } else if (result.requestFailed) {
+        relayFailures = Math.min(relayFailures + 1, 5);
+        const delayMs = Math.min(30_000, 2_000 * 2 ** (relayFailures - 1));
+        relayRetryAfterMs = performance.now() + delayMs;
+        q<HTMLElement>("#status").textContent = `Judgment unavailable (${result.error ?? "stale relay answer"}); retrying after ${delayMs / 1000}s. Motion paused.`;
+      } else if (result.error) {
+        q<HTMLElement>("#status").textContent = `Judgment unavailable (${result.error}); motion paused.`;
+      } else if (!result.stale) {
+        if (relayFailures > 0 && !result.skipped) {
+          q<HTMLElement>("#status").textContent = "Relay recovered; fresh judgments resumed. Robot motion still needs current scene evidence and explicit enablement.";
+        }
+        relayFailures = 0;
+        relayRetryAfterMs = 0;
+      }
       const eventReady = Boolean(host && relayTransport && eventsToggle.checked && !audioOnly && !result.stale && detector
         && trackingVersion === detectorEpoch && video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA
         && lastEventSource && motionEvidenceCurrent({ ...lastEventSource, deliveredAtMs,

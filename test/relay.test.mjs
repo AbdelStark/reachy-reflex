@@ -41,6 +41,12 @@ test("relay 429 is visible as a limit and is not retried by the Jev client", asy
   assert.equal(calls, 1);
   assert.equal(sleeps, 0);
   assert.equal(isRetryableRelayError(new RelayError(503)), true);
+  for (const status of [400, 401, 403, 404, 413]) {
+    const error = new RelayError(status);
+    assert.equal(error.name, "RelayRequestRejectedError");
+    assert.equal(isRetryableRelayError(error), false);
+  }
+  assert.equal(isRetryableRelayError(new RelayError(408)), true);
 });
 
 test("local relay authenticates, checks origin and shape, and forwards exactly one call", async () => {

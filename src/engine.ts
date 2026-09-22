@@ -54,7 +54,7 @@ export function typeSafeTransport(client: TypeSafeClient) {
   };
 }
 
-export interface EngineTick { output: ReflexOutput; panel: PanelFrame; answers?: ReflexAnswers; model?: string; latencyMs?: number; skipped?: boolean; stale: boolean; error?: string }
+export interface EngineTick { output: ReflexOutput; panel: PanelFrame; answers?: ReflexAnswers; model?: string; latencyMs?: number; skipped?: boolean; stale: boolean; error?: string; requestFailed?: boolean }
 export class ReflexEngine {
   private generation = 0;
   private awaitingFresh = false;
@@ -101,7 +101,7 @@ export class ReflexEngine {
       response = await this.client.ask(state, questions);
     } catch (error) {
       if (generation !== this.generation) { this.client.clear(); return undefined; }
-      return { output: this.policy.step({ ...input, stale: true }), panel: stalePanelFrame(), stale: true, error: error instanceof Error ? error.name : "JevError" };
+      return { output: this.policy.step({ ...input, stale: true }), panel: stalePanelFrame(), stale: true, error: error instanceof Error ? error.name : "JevError", requestFailed: true };
     }
     if (generation !== this.generation) { this.client.clear(); return undefined; }
     // A previously cached answer cannot seed a newly armed policy epoch.
@@ -110,9 +110,9 @@ export class ReflexEngine {
       const answers = parse(response.answers, ids);
       const output = this.policy.step({ ...input, answers, stale: response.stale });
       if (this.awaitingFresh) this.awaitingFresh = false;
-      return { output, panel: reflexPanelFrame(answers, { stale: response.stale, skipped: response.skipped, latencyMs: response.latencyMs, ...(response.model ? { model: response.model } : {}) }), answers, stale: response.stale, ...(response.model ? { model: response.model } : {}), latencyMs: response.latencyMs, skipped: response.skipped };
+      return { output, panel: reflexPanelFrame(answers, { stale: response.stale, skipped: response.skipped, latencyMs: response.latencyMs, ...(response.model ? { model: response.model } : {}) }), answers, stale: response.stale, requestFailed: response.stale, ...(response.model ? { model: response.model } : {}), latencyMs: response.latencyMs, skipped: response.skipped };
     } catch (error) {
-      return { output: this.policy.step({ ...input, stale: true }), panel: stalePanelFrame(response.model), stale: true, error: error instanceof Error ? error.name : "InvalidAnswer" };
+      return { output: this.policy.step({ ...input, stale: true }), panel: stalePanelFrame(response.model), stale: true, error: error instanceof Error ? error.name : "InvalidAnswer", requestFailed: true };
     }
   }
 }

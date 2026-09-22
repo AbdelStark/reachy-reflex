@@ -103,6 +103,31 @@ test("verified local model initializes MediaPipe with browser assets on this ori
   expect(thirdParty.every((url) => url.startsWith("https://odml.pa.googleapis.com/v1/log"))).toBe(true);
 });
 
+test("detector adapter clips off-frame faces before handing positions to tracking", async ({ page }) => {
+  await page.goto("/?preview=1");
+  const boxes = await page.evaluate(async () => {
+    const { VideoFaceDetector } = await import("/src/vision.ts");
+    const video = document.createElement("video");
+    Object.defineProperties(video, {
+      videoWidth: { value: 100 },
+      videoHeight: { value: 100 },
+      readyState: { value: HTMLMediaElement.HAVE_CURRENT_DATA },
+    });
+    const detector = Reflect.construct(VideoFaceDetector, [{ detectForVideo: () => ({ detections: [
+      { boundingBox: { originX: -10, originY: 10, width: 20, height: 20 } },
+      { boundingBox: { originX: 90, originY: 85, width: 20, height: 30 } },
+      { boundingBox: { originX: 100, originY: 10, width: 20, height: 20 } },
+    ] }) }]);
+    return detector.detect(video, 0);
+  });
+  expect(boxes).toHaveLength(2);
+  expect(boxes[0]).toEqual({ x: 0, y: 0.1, width: 0.1, height: 0.2 });
+  expect(boxes[1].x).toBe(0.9);
+  expect(boxes[1].y).toBe(0.85);
+  expect(boxes[1].width).toBeCloseTo(0.1);
+  expect(boxes[1].height).toBe(0.15);
+});
+
 test("microphone transcript path is opt-in, final-only, and cleared on stop", async ({ page }) => {
   const jevRequests: string[] = [];
   page.on("request", (request) => { if (request.url().includes("/v1/systemone")) jevRequests.push(request.url()); });

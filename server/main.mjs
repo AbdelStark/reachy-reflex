@@ -7,6 +7,7 @@ const allowedOrigin = process.env.REFLEX_ALLOWED_ORIGIN ?? "http://127.0.0.1:517
 const eventSubscriberToken = process.env.REFLEX_EVENT_SUBSCRIBER_TOKEN;
 const speakingWriterToken = process.env.REFLEX_SPEAKING_WRITER_TOKEN;
 const port = Number(process.env.REFLEX_RELAY_PORT ?? "8048");
+const maxUpstreamAttempts = Number(process.env.REFLEX_MAX_UPSTREAM_ATTEMPTS ?? "300");
 if (!apiKey || !token) throw new Error("TYPESAFE_API_KEY and REFLEX_RELAY_TOKEN are required");
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new TypeError("invalid relay port");
 const client = new TypeSafeClient({ apiKey });
@@ -15,11 +16,12 @@ const server = createRelayServer({
   allowedOrigin,
   eventSubscriberToken,
   speakingWriterToken,
+  maxUpstreamAttempts,
   ask: (state, questions) => client.systemOne(
     { state, questions, model: "jev-latest" },
     { timeout: 5000, retry: { maxRetries: 0 } },
   ),
 });
 server.listen(port, "127.0.0.1", () => {
-  process.stdout.write(`Reflex relay listening on 127.0.0.1:${port} for ${allowedOrigin}\n`);
+  process.stdout.write(`Reflex relay listening on 127.0.0.1:${port} for ${allowedOrigin}; upstream attempt limit ${maxUpstreamAttempts}\n`);
 });

@@ -5,6 +5,7 @@ import WebSocket, { WebSocketServer } from "ws";
 const MAX_BODY = 32 * 1024;
 const MAX_INFLIGHT = 2;
 const MAX_PER_MINUTE = 300;
+const DEFAULT_UPSTREAM_ATTEMPTS = 300;
 const MAX_EVENT_BYTES = 512;
 const MAX_EVENT_SUBSCRIBERS = 8;
 const MAX_EVENTS_PER_MINUTE = 600;
@@ -121,10 +122,11 @@ function rejectUpgrade(socket, status) {
 }
 
 /** Local-only, authenticated and bounded Jev relay. Never logs state or secrets. */
-export function createRelayServer({ token, allowedOrigin, ask, eventSubscriberToken, speakingWriterToken, now = Date.now }) {
+export function createRelayServer({ token, allowedOrigin, ask, eventSubscriberToken, speakingWriterToken, maxUpstreamAttempts = DEFAULT_UPSTREAM_ATTEMPTS, now = Date.now }) {
   if (typeof token !== "string" || token.length < 32) throw new TypeError("relay token must be at least 32 characters");
   if (typeof allowedOrigin !== "string" || !/^https?:\/\/[^/]+$/.test(allowedOrigin)) throw new TypeError("invalid allowed origin");
   if (typeof ask !== "function") throw new TypeError("ask function required");
+  if (!Number.isSafeInteger(maxUpstreamAttempts) || maxUpstreamAttempts < 1 || maxUpstreamAttempts > 10_000) throw new TypeError("upstream attempt limit must be an integer from 1 to 10000");
   if (eventSubscriberToken !== undefined && (typeof eventSubscriberToken !== "string" || eventSubscriberToken.length < 32 || eventSubscriberToken === token)) throw new TypeError("event subscriber token must be distinct and at least 32 characters");
   if (speakingWriterToken !== undefined && (typeof speakingWriterToken !== "string" || speakingWriterToken.length < 32 || speakingWriterToken === token || speakingWriterToken === eventSubscriberToken)) throw new TypeError("speaking writer token must be distinct and at least 32 characters");
   const events = eventSubscriberToken ? new WebSocketServer({ noServer: true, perMessageDeflate: false, maxPayload: MAX_EVENT_BYTES }) : undefined;
@@ -135,6 +137,7 @@ export function createRelayServer({ token, allowedOrigin, ask, eventSubscriberTo
   let inflight = 0;
   let windowStart = now();
   let calls = 0;
+  let upstreamAttempts = 0;
   let eventWindowStart = now();
   let eventCalls = 0;
   let eventSequence = 0;
@@ -270,6 +273,8 @@ export function createRelayServer({ token, allowedOrigin, ask, eventSubscriberTo
       try { body = JSON.parse(Buffer.concat(chunks).toString("utf8")); }
       catch { return send(response, 400, { error: "invalid_json" }, origin); }
       if (!validBody(body)) return send(response, 400, { error: "invalid_request" }, origin);
+      if (upstreamAttempts >= maxUpstreamAttempts) return send(response, 429, { error: "upstream_attempt_limit" }, origin);
+      upstreamAttempts++;
       const result = await ask(body.state, body.questions);
       return send(response, 200, { model: result.model, answers: result.answers, usage: result.usage }, origin);
     } catch {

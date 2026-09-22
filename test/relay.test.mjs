@@ -21,6 +21,9 @@ test("browser relay URL and credentials are constrained", () => {
 });
 
 test("local relay authenticates, checks origin and shape, and forwards exactly one call", async () => {
+  for (const maxUpstreamAttempts of [0, 1.5, Number.POSITIVE_INFINITY, 10_001]) {
+    assert.throws(() => createRelayServer({ token, allowedOrigin: origin, ask: async () => ({}), maxUpstreamAttempts }), TypeError);
+  }
   let calls = 0;
   const server = createRelayServer({ token, allowedOrigin: origin, ask: async () => { calls++; return { model: "fixture", answers: { addressed: { type: "noul", noul: 0.8 } } }; } });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -37,6 +40,43 @@ test("local relay authenticates, checks origin and shape, and forwards exactly o
     assert.equal(response.model, "fixture");
     assert.equal(calls, 1);
   } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("upstream attempt cap reserves before a call and does not reset with the minute window", async () => {
+  let nowMs = 1_000;
+  let calls = 0;
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  let started;
+  const entered = new Promise((resolve) => { started = resolve; });
+  const server = createRelayServer({
+    token, allowedOrigin: origin, maxUpstreamAttempts: 1, now: () => nowMs,
+    ask: async () => { calls++; started(); await pending; throw new Error("possibly billed"); },
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const url = `http://127.0.0.1:${server.address().port}/v1/systemone`;
+    const post = (payload = body) => fetch(url, {
+      method: "POST",
+      headers: { Origin: origin, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    assert.equal((await post({ ...body, questions: {} })).status, 400);
+    const first = post();
+    await entered;
+    nowMs += 60_000;
+    const limited = await post();
+    assert.equal(limited.status, 429);
+    assert.deepEqual(await limited.json(), { error: "upstream_attempt_limit" });
+    assert.equal(calls, 1);
+    release();
+    assert.equal((await first).status, 503);
+    assert.equal((await post()).status, 429);
+    assert.equal(calls, 1);
+  } finally {
+    release();
     await new Promise((resolve) => server.close(resolve));
   }
 });

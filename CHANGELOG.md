@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Pin the shared `reachy-jev` update that bounds recent transcript state to 200 UTF-16 units without splitting an emoji; shared cross-language fixtures and this app's synthetic suite pass. No live transcription or model behavior is inferred.
 - Validate the session trace's exported policy vocabulary before retaining a row: free-form event/answer labels, non-finite judgments or targets, and malformed speaking evidence fail closed. Keep extra response fields out of the projected JSONL; this is a recorder boundary, not tamper-evident provenance.
 - Refresh the synthetic speaking assertion while the browser event-bridge test waits for `yield`, matching the real advisory writer's heartbeat; bound WebSocket/HTTP teardown so CI timing failures are easier to attribute.
 - Detach tracked face boxes and returned room snapshots from caller-owned objects; reject out-of-order camera timestamps so an older frame cannot silently remap a session label. The app's existing perception-error path clears evidence and disarms motion; synthetic tests do not validate camera timing on a robot.

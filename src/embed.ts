@@ -563,7 +563,19 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
           latestFrameAtMs: lastFrameAtMs, latestPeople: perception.snapshot(deliveredAtMs).people ?? [] }));
       let motionOutcome: MotionOutcome = preview ? "preview" : motionToggle.checked ? "held" : "off";
       if (motionReady) {
-        try { motionOutcome = motion!.apply(result.output, deliveredAtMs) ? "accepted" : "not_accepted"; }
+        try {
+          const dispatch = motion!.apply(result.output, deliveredAtMs);
+          motionOutcome = dispatch === "accepted" ? "accepted" : dispatch === "held" ? "held" : "not_accepted";
+          if (dispatch === "rejected" || dispatch === "unavailable") {
+            motionEpoch++;
+            lastMotionSource = undefined;
+            motionToggle.checked = false;
+            motion!.setEnabled(false);
+            q<HTMLElement>("#status").textContent = dispatch === "rejected"
+              ? "Robot rejected the motion request; motion disarmed. Check the robot and use the physical stop if needed before re-enabling."
+              : "Robot connection became unavailable; motion disarmed. Check the robot before re-enabling.";
+          }
+        }
         catch {
           motionOutcome = "error";
           motionEpoch++;

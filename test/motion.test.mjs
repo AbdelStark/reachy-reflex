@@ -16,15 +16,37 @@ test("motion requires an explicit enable and active robot; nod holds continuous 
   const robot = { state: "streaming", setTarget: (target) => { calls.push(["set", target]); return true; }, gotoTarget: (target) => { calls.push(["goto", target]); return true; } };
   const controller = new RobotMotionController(robot);
   const output = { target: attend(-18), gaze: "p1", events: [], idle: false, nod: false };
-  assert.equal(controller.apply(output, 0), false);
+  assert.equal(controller.apply(output, 0), "held");
   controller.setEnabled(true);
-  assert.equal(controller.apply(output, 0), true);
-  assert.equal(controller.apply({ ...output, nod: true }, 250), true);
-  assert.equal(controller.apply(output, 500), false);
-  assert.equal(controller.apply(output, 750), true);
+  assert.equal(controller.apply(output, 0), "accepted");
+  assert.equal(controller.apply({ ...output, nod: true }, 250), "accepted");
+  assert.equal(controller.apply(output, 500), "held");
+  assert.equal(controller.apply(output, 750), "accepted");
   robot.state = "disconnected";
-  assert.equal(controller.apply(output, 1000), false);
-  assert.deepEqual(calls.map(([kind]) => kind), ["set", "goto", "set"]);
+  assert.equal(controller.apply(output, 1000), "unavailable");
+  robot.state = "streaming";
+  assert.equal(controller.apply(output, 1250), "held");
+  controller.setEnabled(true);
+  assert.equal(controller.apply(output, 1500), "accepted");
+  assert.deepEqual(calls.map(([kind]) => kind), ["set", "goto", "set", "set"]);
+});
+
+test("an SDK-rejected pose disarms the controller until explicit re-enable", () => {
+  const calls = [];
+  let accepts = false;
+  const robot = { state: "streaming", setTarget: () => { calls.push("set"); return accepts; }, gotoTarget: () => { calls.push("goto"); return accepts; } };
+  const controller = new RobotMotionController(robot);
+  const output = { target: attend(-18), gaze: "p1", events: [], idle: false, nod: false };
+  controller.setEnabled(true);
+  assert.equal(controller.apply(output, 0), "rejected");
+  assert.equal(controller.apply(output, 250), "held");
+  accepts = true;
+  controller.setEnabled(true);
+  assert.equal(controller.apply(output, 500), "accepted");
+  accepts = false;
+  assert.equal(controller.apply({ ...output, nod: true }, 750), "rejected");
+  assert.equal(controller.apply(output, 1000), "held");
+  assert.deepEqual(calls, ["set", "set", "goto"]);
 });
 
 test("model motion requires a recent answer, fresh frames, and a stable set of face bearings", () => {

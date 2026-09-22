@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Distinguish normal nod cooldown from SDK pose rejection or lost robot connection. Rejection/disconnect now disarms the session's motion path until explicit re-enable; fake-controller and browser tests cover the software boundary, not a physical stop.
 - Pause periodic judgments on relay request rejections such as invalid authentication, origin, endpoint, or request shape; back off transient request/model failures from 2 to 30 seconds, including stale cached answers. Fake-relay browser tests check that misconfiguration does not become a 4 Hz request loop; no live network or robot timing is claimed.
 - Treat relay HTTP 429 as non-retryable, pause the browser judgment loop until an operator reconnects, and show an actionable status while motion remains held; fake-relay tests cover the limit without model or robot calls.
 - Cap valid upstream model-call attempts per relay process (300 by default, configurable), reserving before the call and counting failures; minute-window resets do not renew the cap. This is not a billing or token budget.

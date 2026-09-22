@@ -557,6 +557,73 @@ test("slow Jev answers and their cached copies cannot move a fake robot", async 
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
 });
 
+test("SDK rejection or disconnect disarms motion until the operator re-enables it", async ({ page }) => {
+  await page.route("http://127.0.0.1:8048/v1/systemone", async (route) => {
+    const headers = {
+      "Access-Control-Allow-Origin": "http://127.0.0.1:5173",
+      "Access-Control-Allow-Headers": "Authorization, Content-Type",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Content-Type": "application/json",
+    };
+    if (route.request().method() === "OPTIONS") return route.fulfill({ status: 204, headers });
+    const { questions } = route.request().postDataJSON() as { questions: Record<string, { type: string; criteria?: Record<string, null> }> };
+    const answers = Object.fromEntries(Object.entries(questions).map(([key, question]) => [key,
+      question.type === "choice" ? { type: "choice", choice: Object.keys(question.criteria ?? {})[0], confidence: 0.9 }
+        : question.type === "score" ? { type: "score", score: 2 } : { type: "noul", noul: 0.1 },
+    ]));
+    await route.fulfill({ status: 200, headers, body: JSON.stringify({ model: "fixture", answers }) });
+  });
+  await page.goto("/?preview=1");
+  await page.evaluate(async () => {
+    window.dispatchEvent(new Event("pagehide"));
+    const fixture = { calls: 0, accept: false, state: "streaming" };
+    (window as unknown as { rejectedPoseFixture: typeof fixture }).rejectedPoseFixture = fixture;
+    const canvas = document.createElement("canvas");
+    canvas.width = 320; canvas.height = 240;
+    const context = canvas.getContext("2d")!;
+    let shade = 0;
+    const draw = window.setInterval(() => { context.fillStyle = `rgb(${shade++ % 255},0,0)`; context.fillRect(0, 0, 320, 240); }, 50);
+    const stream = canvas.captureStream(30);
+    const robot = {
+      get state() { return fixture.state; },
+      setTarget() { fixture.calls++; return fixture.accept; },
+      gotoTarget() { fixture.calls++; return fixture.accept; },
+    };
+    const host = {
+      reachy: robot,
+      media: { attachVideo(video: HTMLVideoElement) { video.srcObject = stream; void video.play(); return () => { clearInterval(draw); stream.getTracks().forEach((track) => track.stop()); }; }, robotStream: undefined },
+      onLeave: () => {},
+    };
+    const { mountApp } = await import("/src/embed.ts");
+    mountApp(host as never, async () => ({ detect() { return [{ x: 0.3, y: 0.2, width: 0.2, height: 0.3 }]; }, close() {} }));
+  });
+  await page.locator("#relay-token").fill("t".repeat(32));
+  await page.getByRole("button", { name: "Connect Jev relay" }).click();
+  await page.locator("#tracking-enable").check();
+  await expect(page.locator("#person-count")).toHaveText("1");
+  await page.locator("#motion-enable").check();
+  await expect(page.locator("#status")).toContainText("Robot rejected the motion request", { timeout: 5_000 });
+  await expect(page.locator("#motion-enable")).not.toBeChecked();
+  const rejectedCalls = await page.evaluate(() => (window as unknown as { rejectedPoseFixture: { calls: number } }).rejectedPoseFixture.calls);
+  await page.waitForTimeout(600);
+  expect(await page.evaluate(() => (window as unknown as { rejectedPoseFixture: { calls: number } }).rejectedPoseFixture.calls)).toBe(rejectedCalls);
+  await page.evaluate(() => {
+    const fixture = (window as unknown as { rejectedPoseFixture: { accept: boolean; state: string } }).rejectedPoseFixture;
+    fixture.accept = true;
+    fixture.state = "disconnected";
+  });
+  await page.locator("#motion-enable").check();
+  await expect(page.locator("#status")).toContainText("Robot connection became unavailable", { timeout: 5_000 });
+  await expect(page.locator("#motion-enable")).not.toBeChecked();
+  expect(await page.evaluate(() => (window as unknown as { rejectedPoseFixture: { calls: number } }).rejectedPoseFixture.calls)).toBe(rejectedCalls);
+  await page.evaluate(() => { (window as unknown as { rejectedPoseFixture: { state: string } }).rejectedPoseFixture.state = "streaming"; });
+  await page.waitForTimeout(600);
+  expect(await page.evaluate(() => (window as unknown as { rejectedPoseFixture: { calls: number } }).rejectedPoseFixture.calls)).toBe(rejectedCalls);
+  await page.locator("#motion-enable").check();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { rejectedPoseFixture: { calls: number } }).rejectedPoseFixture.calls), { timeout: 5_000 }).toBeGreaterThan(rejectedCalls);
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+});
+
 test("recycling a face label discards an in-flight judgment before robot motion", async ({ page }) => {
   let blockOld = false;
   let oldBlocked = false;

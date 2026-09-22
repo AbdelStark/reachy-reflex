@@ -17,6 +17,9 @@ export interface MotionEvidence {
   latestPeople: readonly { id: string; bearingDeg?: number }[];
 }
 
+/** Only cooldown/disabled is a hold; transport loss or SDK rejection retires the arm. */
+export type MotionApplyResult = "accepted" | "held" | "unavailable" | "rejected";
+
 /** A model answer may move the robot only while its camera-derived scene is still current. */
 export function motionEvidenceCurrent(evidence: MotionEvidence): boolean {
   const { startedAtMs, deliveredAtMs, observedFrameAtMs, latestFrameAtMs, observedPeople, latestPeople } = evidence;
@@ -50,16 +53,23 @@ export class RobotMotionController {
   private nodUntilMs = -Infinity;
   constructor(private readonly robot: RobotMotionPort) {}
   setEnabled(enabled: boolean): void { this.enabled = enabled; }
-  apply(output: ReflexOutput, nowMs: number): boolean {
-    if (!this.enabled || this.robot.state !== "streaming" || !Number.isFinite(nowMs)) return false;
-    if (nowMs < this.nodUntilMs) return false;
+  apply(output: ReflexOutput, nowMs: number): MotionApplyResult {
+    if (!this.enabled) return "held";
+    if (this.robot.state !== "streaming" || !Number.isFinite(nowMs)) {
+      this.enabled = false;
+      return "unavailable";
+    }
+    if (nowMs < this.nodUntilMs) return "held";
     const base = toSdkTarget(output.target);
     if (output.nod) {
       const nodPose = { ...output.target, pitchDeg: Math.min(20, output.target.pitchDeg + 12) };
       const accepted = this.robot.gotoTarget({ ...toSdkTarget(nodPose), duration: 0.3 });
       if (accepted) this.nodUntilMs = nowMs + 500;
-      return accepted;
+      else this.enabled = false;
+      return accepted ? "accepted" : "rejected";
     }
-    return this.robot.setTarget(base);
+    const accepted = this.robot.setTarget(base);
+    if (!accepted) this.enabled = false;
+    return accepted ? "accepted" : "rejected";
   }
 }

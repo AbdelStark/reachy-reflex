@@ -51,7 +51,7 @@ export function mountApp(host?: Host, createFaceDetector: () => Promise<FaceDete
         <div class="trace-controls"><label class="tracking-toggle"><input id="trace-enable" type="checkbox"><span>Record a local, text-free judgment trace for this tab. Ask nearby people first; the export includes approximate face bearings and model answers, but no frames, audio, or transcript text.</span></label><div><button id="trace-download" type="button" disabled>Download trace JSONL</button><button id="trace-clear" type="button" disabled>Discard trace</button></div><p id="trace-status" role="status" aria-live="polite">Trace off. Nothing saved.</p></div>
         <p id="status" role="status" aria-live="polite">${preview ? "Preview running with fixture-only answers." : "Connect a relay before judging the room. Motion stays off until enabled."}</p>
       </section>
-      <footer>Face boxes are local and approximate. No identity recognition. No live accuracy, latency, or hardware claim yet.</footer>
+      <footer>Face boxes are local and approximate. No identity recognition. No live accuracy, latency, or hardware claim yet. <a href="/THIRD_PARTY_NOTICES.md">Third-party notices</a>.</footer>
     </main>`;
   const q = <T extends HTMLElement>(selector: string): T => {
     const element = root!.querySelector<T>(selector);

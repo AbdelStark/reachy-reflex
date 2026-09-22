@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add source and built-app third-party notices for the pinned MediaPipe Tasks Vision WebAssembly and checksum-verified BlazeFace model, with the Apache 2.0 license text and a visible app link. Google's model card names the model's license; this is asset provenance, not hardware validation.
 - Clip partially off-frame MediaPipe face rectangles to the camera frame before computing normalized boxes and approximate bearings. Unit and fake-detector browser tests cover edge geometry, not live tracking quality.
 - Distinguish normal nod cooldown from SDK pose rejection or lost robot connection. Rejection/disconnect now disarms the session's motion path until explicit re-enable; fake-controller and browser tests cover the software boundary, not a physical stop.
 - Pause periodic judgments on relay request rejections such as invalid authentication, origin, endpoint, or request shape; back off transient request/model failures from 2 to 30 seconds, including stale cached answers. Fake-relay browser tests check that misconfiguration does not become a 4 Hz request loop; no live network or robot timing is claimed.

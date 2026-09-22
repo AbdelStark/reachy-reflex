@@ -9,7 +9,7 @@
     "node": ">=20.19"
   },
   "scripts": {
-    "build": "vite build",
+    "build": "vite build && node scripts/check_build_assets.mjs",
     "build:core": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
     "dev": "vite --host 127.0.0.1",

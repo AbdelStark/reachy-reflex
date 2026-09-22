@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Validate the session trace's exported policy vocabulary before retaining a row: free-form event/answer labels, non-finite judgments or targets, and malformed speaking evidence fail closed. Keep extra response fields out of the projected JSONL; this is a recorder boundary, not tamper-evident provenance.
 - Refresh the synthetic speaking assertion while the browser event-bridge test waits for `yield`, matching the real advisory writer's heartbeat; bound WebSocket/HTTP teardown so CI timing failures are easier to attribute.
 - Detach tracked face boxes and returned room snapshots from caller-owned objects; reject out-of-order camera timestamps so an older frame cannot silently remap a session label. The app's existing perception-error path clears evidence and disarms motion; synthetic tests do not validate camera timing on a robot.
 - Pin the local model relay to the reviewed 16-question Reflex wire while validating person-dependent attention choices against bounded, bucketed room state; reject altered instructions and extra/private fields before the model port. Synthetic relay and browser checks do not measure Jev or robot behavior.

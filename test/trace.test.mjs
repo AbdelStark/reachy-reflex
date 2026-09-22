@@ -57,3 +57,27 @@ test("trace bounds session rows, records stale calls, and clears without persist
   assert.equal(trace.count, 0);
   assert.equal(trace.toJSONL(), "");
 });
+
+test("trace refuses free-form event and answer labels or non-finite policy evidence", async () => {
+  const engine = new ReflexEngine(new JevClient({ ask: fixtureAsk }));
+  const observation = { people: [{ id: "p1", bearingDeg: -12 }] };
+  const tick = await engine.tick(observation, 100);
+  for (const mutate of [
+    (value) => { value.output.events = [{ type: "PRIVATE_EVENT_TEXT" }]; },
+    (value) => { value.answers.turn_action.choice = "PRIVATE_TURN_TEXT"; },
+    (value) => { value.answers.speaker_mood.choice = "PRIVATE_MOOD_TEXT"; },
+    (value) => { value.answers.addressed.noul = Number.NaN; },
+    (value) => { value.output.target.yawDeg = Number.NaN; },
+    (value) => { value.output.nod = "PRIVATE_NOD_TEXT"; },
+  ]) {
+    const recorder = new SessionTrace();
+    const malformed = structuredClone(tick);
+    mutate(malformed);
+    assert.throws(() => recorder.add(observation, malformed, 130, "held", 1), TypeError);
+    assert.equal(recorder.count, 0);
+    assert.equal(recorder.toJSONL(), "");
+  }
+  const recorder = new SessionTrace();
+  assert.throws(() => recorder.add({ ...observation, robot: { currentlySpeaking: "PRIVATE_STATE_TEXT" } }, tick, 130, "held", 1), TypeError);
+  assert.equal(recorder.count, 0);
+});

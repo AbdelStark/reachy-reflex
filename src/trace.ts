@@ -14,9 +14,34 @@ const NOUL_KEYS = [
   "group_talking_to_each_other", "robot_named", "question_asked",
   "laughter_moment", "silence_awkward",
 ] as const;
-const personId = (value: string): boolean => /^p[1-9]$/.test(value);
+const TARGET_KEYS = ["yawDeg", "pitchDeg", "rollDeg", "zMm", "leftAntennaDeg", "rightAntennaDeg"] as const;
+const personId = (value: unknown): value is string => typeof value === "string" && /^p[1-9]$/.test(value);
+const probability = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+const finite = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
 const motionOutcome = (value: string): value is MotionOutcome =>
   ["preview", "off", "held", "accepted", "not_accepted", "error"].includes(value);
+
+function validAnswers(answers: ReflexAnswers): boolean {
+  if (!answers || !answers.attention_target || !answers.turn_action || !answers.engagement || !answers.speaker_mood
+    || !NOUL_KEYS.every((key) => probability(answers[key]?.noul))) return false;
+  const target = answers.attention_target;
+  const turn = answers.turn_action;
+  const mood = answers.speaker_mood;
+  return (target.choice === "none" || personId(target.choice)) && probability(target.confidence)
+    && ["keep_talking", "yield", "interrupt"].includes(turn.choice) && probability(turn.confidence)
+    && (turn.probabilities?.interrupt === undefined || probability(turn.probabilities.interrupt))
+    && finite(answers.engagement.score) && answers.engagement.score >= 0 && answers.engagement.score <= 4
+    && ["neutral", "curious", "playful", "tense", "frustrated"].includes(mood.choice) && probability(mood.confidence);
+}
+
+function validEvent(event: { type: string; person?: string; p?: number }): boolean {
+  if (!event || typeof event !== "object") return false;
+  const keys = Object.keys(event).sort().join();
+  if (event.type === "attention") return keys === "person,type" && personId(event.person);
+  if (event.type === "user_addressed") return keys === "p,person,type" && personId(event.person) && probability(event.p);
+  if (event.type === "yield" || event.type === "interrupt") return keys === "p,type" && probability(event.p);
+  return false;
+}
 
 function traceAnswers(answers: ReflexAnswers | undefined) {
   if (!answers) return undefined;
@@ -77,14 +102,25 @@ export class SessionTrace {
     }
     if (!motionOutcome(motion)) throw new TypeError("invalid motion outcome");
     if (this.rows.length && nowMs <= this.rows.at(-1)!.policy_clock_ms) throw new RangeError("trace time went backward");
-    this.startMs ??= nowMs;
+    if (observation.robot?.currentlySpeaking !== undefined && typeof observation.robot.currentlySpeaking !== "boolean") {
+      throw new TypeError("invalid robot speaking evidence");
+    }
+    if (!tick || typeof tick.stale !== "boolean" || (tick.skipped !== undefined && typeof tick.skipped !== "boolean")
+      || (!tick.stale && !tick.answers) || (tick.answers && !validAnswers(tick.answers))
+      || !tick.output || typeof tick.output.nod !== "boolean" || typeof tick.output.idle !== "boolean"
+      || !(tick.output.gaze === "none" || personId(tick.output.gaze))
+      || !tick.output.target || !TARGET_KEYS.every((key) => finite(tick.output.target[key]))
+      || !Array.isArray(tick.output.events) || tick.output.events.length > 4 || !tick.output.events.every(validEvent)) {
+      throw new TypeError("invalid trace policy evidence");
+    }
+    const startMs = this.startMs ?? nowMs;
     const target = tick.output.target;
     const row: TraceTick = {
       schema: TRACE_SCHEMA,
       policy_epoch: policyEpoch,
-      elapsed_ms: Math.round(nowMs - this.startMs),
+      elapsed_ms: Math.round(nowMs - startMs),
       policy_clock_ms: nowMs,
-      people: (observation.people ?? []).filter((person) => personId(person.id) && Number.isFinite(person.bearingDeg)).slice(0, 9).map((person) => ({
+      people: (observation.people ?? []).filter((person) => personId(person.id) && finite(person.bearingDeg) && Math.abs(person.bearingDeg) <= 180).slice(0, 9).map((person) => ({
         id: person.id,
         bearing_deg: person.bearingDeg!,
       })),
@@ -115,6 +151,7 @@ export class SessionTrace {
         motion,
       },
     };
+    this.startMs = startMs;
     this.rows.push(row);
     if (this.rows.length > MAX_TRACE_ROWS) this.rows.shift();
   }
